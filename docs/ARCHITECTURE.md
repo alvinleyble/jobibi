@@ -159,7 +159,7 @@ At $50/month of AI spend that is roughly 4,100 applications. **The free tier's d
 
 - The model provider API key exists only in Edge Function secrets. Extension ships zero secrets.
 - The provider does not train on API traffic; Asia data residency is available. Only the question, retrieved snippets, and the style profile ever leave — never another user's data.
-- Extension auth: Supabase PKCE flow (extension redirect URLs have known quirks; solvable, budgeted in Phase 1).
+- Extension auth: Supabase email-OTP magic-link with PKCE code exchange, completed on a dedicated extension page (`entrypoints/callback`) rather than `chrome.identity.launchWebAuthFlow` against a third-party OAuth provider — this avoids MV3's captured-webview redirect quirks. The side panel and callback page each hold their own Supabase client, sharing `chrome.storage.local` as the session store; the side panel listens for `chrome.storage.onChanged` to pick up a session written by the callback page's client.
 - MV3 constraints respected: no remote code, service-worker lifecycle handled by WXT patterns.
 - The read boundary (identified question fields only, never other form fields) is a product-visible commitment stated at onboarding, and the Chrome Web Store listing must describe it accurately.
 

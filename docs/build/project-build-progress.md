@@ -1,6 +1,6 @@
 # Jobibi — Project Build Progress
 
-**Current state:** BUILDING Phase 1 (S1 completed).
+**Current state:** BUILDING Phase 1 (S2 completed).
 
 - 2026-08-09 — Product vision received; stack locked (DECISIONS D1–D4: Chrome extension, cloud memory on Supabase, payments deferred, JobStreet/LinkedIn/Indeed first).
 - 2026-08-09 — Documentation drafted (PRODUCT, ARCHITECTURE, DECISIONS, build plan v0.1).
@@ -23,6 +23,7 @@
 
 - 2026-08-09 — **Supabase project created**, ref `kbpojtjemftqwgmrnbdq`. D7 closed. CLI wiring happens in S2.
 - 2026-08-10 — **S1 completed.** Repo scaffolded (pnpm monorepo with apps/extension and packages/shared). Hello-world side panel verified.
+- 2026-08-10 — **S2 completed.** `profiles` table + RLS migrated via the Supabase CLI to the linked remote project; side panel sign-in via email-OTP magic-link + PKCE, completed on a dedicated callback page. Two-user RLS test passed.
 
 ## Still open
 
@@ -35,6 +36,6 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 scaffold shipped. `main` now holds the WXT + React extension skeleton alongside design documentation.
+S1 and S2 shipped. `main` now holds the WXT + React extension skeleton, Supabase auth + `profiles` schema with RLS, and design documentation.
 
-**Next step:** S2. Supabase project + auth wiring.
+**Next step:** S3. Document upload + ingestion + four-fact intake.

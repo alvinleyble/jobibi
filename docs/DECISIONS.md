@@ -76,7 +76,7 @@ D1–D4 were accepted before the design grill. D5 was split by it. D10–D17 are
 
 **Credential handling:** the CLI authenticates with a personal access token via `supabase login`. The database password is *not* needed for the migration workflow — only for direct `psql`-style connections. Keep the project URL and anon key in `.env` (gitignored); never commit either the database password or a full connection string.
 
-**Wiring is part of S2**, not done yet: the CLI is not installed and `supabase/` does not exist in the repo.
+**Wiring completed in S2**: `profiles` and its RLS policies are committed migrations under `supabase/migrations/`, pushed to the linked remote project via the CLI.
 
 ## D8 — Beta AI budget: $5 starter — **accepted** (2026-08-09)
 
