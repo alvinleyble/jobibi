@@ -423,6 +423,37 @@
       "npm:@supabase/supabase-js@2.45.0",
       "npm:fflate@0.8.3",
       "npm:unpdf@0.12.2"
-    ]
+    ],
+    "members": {
+      "apps/extension": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@supabase/supabase-js@^2.45.0",
+            "npm:@tailwindcss/vite@^4.1.16",
+            "npm:@types/react-dom@^19.2.3",
+            "npm:@types/react@^19.2.14",
+            "npm:@wxt-dev/module-react@^1.1.5",
+            "npm:react-dom@^19.2.4",
+            "npm:react@^19.2.4",
+            "npm:tailwindcss@^4.1.16",
+            "npm:typescript@^5.9.3",
+            "npm:web-ext@^10.5.0",
+            "npm:wxt@~0.21.3"
+          ]
+        }
+      },
+      "packages/shared": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@types/node@^26.2.0",
+            "npm:fflate@~0.8.2",
+            "npm:typescript@^5.9.3",
+            "npm:unpdf@~0.12.1",
+            "npm:vitest@^3.2.4",
+            "npm:zod@^4.1.13"
+          ]
+        }
+      }
+    }
   }
 }

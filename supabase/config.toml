@@ -372,7 +372,7 @@ authorization_url_path = "/oauth/consent"
 allow_dynamic_registration = false
 
 [functions.ingest]
-import_map = "./functions/deno.json"
+import_map = "../deno.json"
 
 [edge_runtime]
 enabled = true
