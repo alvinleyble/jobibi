@@ -3,8 +3,9 @@ node_modules/
 .pnpm-store/
 
 # Build output
+# NOTE: keep these anchored or suffixed. A bare `build/` also matches docs/build/.
 dist/
-build/
+/build/
 .output/
 .wxt/
 *.tsbuildinfo
