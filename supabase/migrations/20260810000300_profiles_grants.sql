@@ -1,1 +1,1 @@
-grant select, insert, update on public.profiles to authenticated;
+grant select, update on public.profiles to authenticated;
