@@ -66,15 +66,17 @@ D1–D4 were accepted before the design grill. D5 was split by it. D10–D17 are
 **Decision:** Private repository at `https://github.com/alvinleyble/jobibi`, owned by the `alvinleyble` account. Delivery posture `no-mistakes-prod-only` — product-facing work runs the full validation pipeline before a PR; internal tooling, scripts, and contributor process ship straight to a PR.
 **Done:** repository created, design docs pushed to `main`, validation gate initialized.
 
-## D7 — Supabase project — **open** (settings and approach decided; creation pending)
+## D7 — Supabase project — **accepted** (2026-08-09)
 
-**Settings decided:** name `Jobibi`, existing organization, region **Southeast Asia (Singapore) `ap-southeast-1`**, Free plan.
+**Decision:** Project created. Ref `kbpojtjemftqwgmrnbdq`, Free plan.
 
-**Approach decided:** schema is managed through the **Supabase CLI inside the repo** — `supabase init`, `supabase link`, migrations as committed files under `supabase/migrations/`. Not through a live database connection.
+**Approach:** schema is managed **only** through the Supabase CLI in this repo — `supabase init`, `supabase link --project-ref <ref>`, migrations as committed files under `supabase/migrations/`. Never through an ambient database connection.
 
-**Why that matters:** the workspace's existing Supabase tooling connection is bound to a *different* production project holding real users' financial data. Keeping Jobibi's schema in CLI-managed migration files walls the two apart permanently, makes every schema change a reviewable file in git, and is what S2 already assumes.
+**Why that matters:** the operator's environment has database tooling bound to a *different* production project holding real users' financial data. Keeping Jobibi's schema in CLI-managed migration files walls the two apart permanently, makes every schema change a reviewable file in git, and is what S2 already assumes.
 
-**Remaining:** create the project and supply its project ref.
+**Credential handling:** the CLI authenticates with a personal access token via `supabase login`. The database password is *not* needed for the migration workflow — only for direct `psql`-style connections. Keep the project URL and anon key in `.env` (gitignored); never commit either the database password or a full connection string.
+
+**Wiring is part of S2**, not done yet: the CLI is not installed and `supabase/` does not exist in the repo.
 
 ## D8 — Beta AI budget: $5 starter — **accepted** (2026-08-09)
 

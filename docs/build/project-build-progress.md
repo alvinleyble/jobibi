@@ -21,11 +21,16 @@
 - 2026-08-09 — **Repository created.** Private at `alvinleyble/jobibi`, posture `no-mistakes-prod-only`, design docs pushed to `main`, validation gate initialized and healthy. D6 closed.
 - 2026-08-09 — **Beta budget set at $5** (existing OpenAI credit) ≈ 416 applications. D8 closed.
 
+- 2026-08-09 — **Supabase project created**, ref `kbpojtjemftqwgmrnbdq`. D7 closed. CLI wiring happens in S2.
+
 ## Still open
 
-- **D7** — create the Supabase project. Settings and approach are decided (Singapore, Free plan, CLI-managed migrations in-repo); only creation and the project ref remain.
 - **D9** — business entity, blocking only for payments.
 - Philippine Data Privacy Act review before public launch.
+
+## All build blockers are now clear
+
+D6, D7, and D8 are closed. Phase 1 can be authorized.
 
 ## Current state of the repo
 
