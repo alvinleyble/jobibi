@@ -10,6 +10,6 @@ export default defineConfig({
   manifest: {
     name: 'Jobibi',
     description: 'Draft job-application answers grounded in your own history.',
-    permissions: ['sidePanel'],
+    permissions: ['sidePanel', 'storage'],
   },
 });
