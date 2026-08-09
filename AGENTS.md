@@ -42,6 +42,10 @@ Schema is managed **only** through the Supabase CLI in this repo: `supabase init
 
 **Do not apply migrations or run SQL through an ambient database connection.** The operator's environment has tooling bound to a *different* production project holding real users' financial data. Migration files in git are the wall between the two. If you find yourself about to run a schema command against a connection you did not create in this repo, stop.
 
+**Edge Functions that import shared code:** functions importing from `packages/shared` (e.g. `ingest`) resolve their npm dependencies (like `unpdf`, `fflate`) through `supabase/functions/deno.json`, wired per-function via `[functions.<name>] import_map` in `supabase/config.toml` — without that wiring, deploy fails with a "not prefixed with / or ./ or ../" bundling error. Relative imports of local `.ts` files must include the `.ts` extension (Deno requires it; `packages/shared/tsconfig.json` sets `allowImportingTsExtensions` so the same source typechecks under both Deno and `tsc`). Deploy with `supabase functions deploy <name> --use-api` — this environment has no Docker, and `--use-api` bundles server-side without it. Embeddings use the Edge Runtime's built-in `Supabase.ai.Session('gte-small')` global (no import, no network call — D5c).
+
+Extraction/chunking logic for uploaded documents lives in `packages/shared/src/ingestion/` and is deliberately **not** re-exported from `packages/shared/src/index.ts` — that barrel is what `apps/extension` imports, and barrel-exporting pdf/docx parsing would drag `unpdf`/`fflate` into the browser bundle for a codepath that only ever runs in the `ingest` Edge Function.
+
 ## Delivery
 
 Posture is `no-mistakes-prod-only`: product-facing work runs the full validation pipeline before a PR; internal tooling, scripts, and contributor process ship straight to a PR. Push through the gate with `git push no-mistakes <branch>`.
