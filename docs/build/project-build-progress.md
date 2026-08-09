@@ -1,6 +1,6 @@
 # Jobibi — Project Build Progress
 
-**Current state:** PRE-BUILD.
+**Current state:** BUILDING Phase 1 (S1 completed).
 
 - 2026-08-09 — Product vision received; stack locked (DECISIONS D1–D4: Chrome extension, cloud memory on Supabase, payments deferred, JobStreet/LinkedIn/Indeed first).
 - 2026-08-09 — Documentation drafted (PRODUCT, ARCHITECTURE, DECISIONS, build plan v0.1).
@@ -22,6 +22,7 @@
 - 2026-08-09 — **Beta budget set at $5** (existing OpenAI credit) ≈ 416 applications. D8 closed.
 
 - 2026-08-09 — **Supabase project created**, ref `kbpojtjemftqwgmrnbdq`. D7 closed. CLI wiring happens in S2.
+- 2026-08-10 — **S1 completed.** Repo scaffolded (pnpm monorepo with apps/extension and packages/shared). Hello-world side panel verified.
 
 ## Still open
 
@@ -30,10 +31,10 @@
 
 ## All build blockers are now clear
 
-D6, D7, and D8 are closed. Phase 1 can be authorized.
+D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-Design documentation only — no application code. `main` holds PRODUCT, ARCHITECTURE, DECISIONS, the build plan, CONTEXT.md, and this file. The validation gate is initialized; from here, code work goes through it rather than direct to `main`.
+S1 scaffold shipped. `main` now holds the WXT + React extension skeleton alongside design documentation.
 
-**Next step:** create the Supabase project (D7), then authorize Phase 1 of the revised build plan (S1 → S2 → S3).
+**Next step:** S2. Supabase project + auth wiring.
