@@ -123,20 +123,25 @@ Deno.serve(async (req) => {
 
     const embeddingSession = new Supabase.ai.Session('gte-small');
     const chunkRows = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const embedding = await embeddingSession.run(chunks[i], { mean_pool: true, normalize: true });
-      chunkRows.push({
-        user_id: user.id,
-        document_id: document.id,
-        chunk_index: i,
-        text: chunks[i],
-        embedding: `[${embedding.join(',')}]`,
-      });
-    }
+    try {
+      for (let i = 0; i < chunks.length; i++) {
+        const embedding = await embeddingSession.run(chunks[i], { mean_pool: true, normalize: true });
+        chunkRows.push({
+          user_id: user.id,
+          document_id: document.id,
+          chunk_index: i,
+          text: chunks[i],
+          embedding: `[${embedding.join(',')}]`,
+        });
+      }
 
-    const { error: chunksError } = await supabase.from('memory_chunks').insert(chunkRows);
-    if (chunksError) {
-      return jsonResponse({ error: `Could not save chunks: ${chunksError.message}` }, 500);
+      const { error: chunksError } = await supabase.from('memory_chunks').insert(chunkRows);
+      if (chunksError) {
+        throw new Error(`Could not save chunks: ${chunksError.message}`);
+      }
+    } catch (err) {
+      await supabase.from('documents').delete().eq('id', document.id);
+      return jsonResponse({ error: (err as Error).message }, 500);
     }
 
     return jsonResponse({ documentId: document.id, chunkCount: chunkRows.length }, 200);

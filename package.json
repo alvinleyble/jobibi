@@ -8,6 +8,5 @@
     "build": "pnpm --filter @jobibi/extension build",
     "compile": "pnpm -r compile",
     "test": "pnpm -r test"
-  },
-  "workspaces": ["apps/*", "packages/*"]
+  }
 }
