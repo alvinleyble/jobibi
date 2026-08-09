@@ -1,0 +1,11 @@
+{
+  "name": "jobibi",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "dev": "pnpm --filter @jobibi/extension dev",
+    "build": "pnpm --filter @jobibi/extension build",
+    "compile": "pnpm -r compile"
+  }
+}
