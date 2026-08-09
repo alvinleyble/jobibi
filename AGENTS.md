@@ -1,6 +1,6 @@
 # Project agent memory
 
-Jobibi is a Chrome extension that drafts job-application answers grounded in the user's own history. **It is pre-build — no application code exists yet.**
+Jobibi is a Chrome extension that drafts job-application answers grounded in the user's own history.
 
 ## Where things are
 

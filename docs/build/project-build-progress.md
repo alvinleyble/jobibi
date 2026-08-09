@@ -1,6 +1,6 @@
 # Jobibi — Project Build Progress
 
-**Current state:** BUILDING Phase 1 (S1 completed).
+**Current state:** BUILDING Phase 1 (S2 completed).
 
 - 2026-08-09 — Product vision received; stack locked (DECISIONS D1–D4: Chrome extension, cloud memory on Supabase, payments deferred, JobStreet/LinkedIn/Indeed first).
 - 2026-08-09 — Documentation drafted (PRODUCT, ARCHITECTURE, DECISIONS, build plan v0.1).
@@ -23,6 +23,7 @@
 
 - 2026-08-09 — **Supabase project created**, ref `kbpojtjemftqwgmrnbdq`. D7 closed. CLI wiring happens in S2.
 - 2026-08-10 — **S1 completed.** Repo scaffolded (pnpm monorepo with apps/extension and packages/shared). Hello-world side panel verified.
+- 2026-08-10 — **S2 completed.** `profiles` table + RLS migrated via the Supabase CLI to the linked remote project (`kbpojtjemftqwgmrnbdq`); side panel sign-in via email-OTP magic-link + PKCE, completed on a dedicated callback page. A build bug (WXT's Vite `envDir` defaulting to `apps/extension` instead of the monorepo root, so real Supabase credentials never reached the bundle) was caught by manual testing and fixed. Two-user RLS test re-run today against the fully-migrated remote project: each user sees only their own row; a direct cross-user `SELECT` and `UPDATE` (by id) are rejected by RLS itself — empty result sets, not merely absent from the app UI; cross-user `INSERT` is rejected with a `42501 permission denied for table profiles` grant-level error (the branch's trailing migrations revoke the `authenticated` role's INSERT grant on `profiles`, so this now fails before RLS is evaluated rather than on an RLS policy check); self-promotion to `tier=premium` is separately rejected by the protect-tier trigger; anon access returns nothing.
 
 ## Still open
 
@@ -35,6 +36,6 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 scaffold shipped. `main` now holds the WXT + React extension skeleton alongside design documentation.
+S1 and S2 shipped. `main` now holds the WXT + React extension skeleton, Supabase auth + `profiles` schema with RLS, and design documentation.
 
-**Next step:** S2. Supabase project + auth wiring.
+**Next step:** S3. Document upload + ingestion + four-fact intake.
