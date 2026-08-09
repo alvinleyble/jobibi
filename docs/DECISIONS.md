@@ -61,17 +61,32 @@ D1–D4 were accepted before the design grill. D5 was split by it. D10–D17 are
 **Revisit trigger:** the two-axis gate misfiring on real data. The fix is then to re-embed on a stronger model rather than to keep tuning cutoffs. Because `memory_chunks` stores source text, this is a batch job per user, not data loss.
 **Rejected:** dropping vectors entirely for keyword + trigram matching — role-match is inherently semantic and cannot be computed from keywords, which would break the ask path (D10).
 
-## D6 — GitHub remote — **open**
+## D6 — GitHub remote — **accepted** (2026-08-09)
 
-Create a private GitHub repository for Jobibi? Awaiting project-owner approval (recommended: yes, private, under the existing account).
+**Decision:** Private repository at `https://github.com/alvinleyble/jobibi`, owned by the `alvinleyble` account. Delivery posture `no-mistakes-prod-only` — product-facing work runs the full validation pipeline before a PR; internal tooling, scripts, and contributor process ship straight to a PR.
+**Done:** repository created, design docs pushed to `main`, validation gate initialized.
 
-## D7 — Supabase account and project — **open**
+## D7 — Supabase project — **open** (settings and approach decided; creation pending)
 
-Host the new Supabase project on the existing account? Region recommendation: Singapore (`ap-southeast-1`). Awaiting confirmation.
+**Settings decided:** name `Jobibi`, existing organization, region **Southeast Asia (Singapore) `ap-southeast-1`**, Free plan.
 
-## D8 — Beta AI budget — **open, but no longer a constraint**
+**Approach decided:** schema is managed through the **Supabase CLI inside the repo** — `supabase init`, `supabase link`, migrations as committed files under `supabase/migrations/`. Not through a live database connection.
 
-Monthly AI spend ceiling for the beta. At ≈ **$0.012 of AI cost per full 20-question application** (D5b), $50/month covers roughly 4,100 applications. The free-tier daily cap should therefore be sized as a fairness and abuse control, not a cost control. Still needs a number named.
+**Why that matters:** the workspace's existing Supabase tooling connection is bound to a *different* production project holding real users' financial data. Keeping Jobibi's schema in CLI-managed migration files walls the two apart permanently, makes every schema change a reviewable file in git, and is what S2 already assumes.
+
+**Remaining:** create the project and supply its project ref.
+
+## D8 — Beta AI budget: $5 starter — **accepted** (2026-08-09)
+
+**Decision:** $5 of existing OpenAI credit funds the beta.
+
+At ≈$0.012 per full 20-question application (D5b), that is roughly **416 applications** — about 8,300 questions, or ten testers doing forty applications each.
+
+**Free-tier daily cap:** ~25 questions per user per day (about one application). Keeps ten testers inside the budget for roughly ten weeks. The cap is a fairness and abuse control, not a cost control.
+
+**Set a hard $5 usage limit on the OpenAI account.** It is a fixed pot with no refill, and a runaway retry loop should not be how that gets discovered.
+
+**Budget risk:** D5b's verbosity finding is now a budget finding. Luna runs ~2× the median output length, output is the dominant cost line, and unconstrained drafting would cost ≈$0.024 per application — halving the runway to ~208 applications. The explicit length cap in the drafting call is what makes $5 last.
 
 ## D9 — Business entity — **open** (blocking only for payments)
 
