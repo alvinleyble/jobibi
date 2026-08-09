@@ -23,7 +23,7 @@
 
 - 2026-08-09 — **Supabase project created**, ref `kbpojtjemftqwgmrnbdq`. D7 closed. CLI wiring happens in S2.
 - 2026-08-10 — **S1 completed.** Repo scaffolded (pnpm monorepo with apps/extension and packages/shared). Hello-world side panel verified.
-- 2026-08-10 — **S2 completed.** `profiles` table + RLS migrated via the Supabase CLI to the linked remote project; side panel sign-in via email-OTP magic-link + PKCE, completed on a dedicated callback page. Two-user RLS test passed.
+- 2026-08-10 — **S2 completed.** `profiles` table + RLS migrated via the Supabase CLI to the linked remote project (`kbpojtjemftqwgmrnbdq`); side panel sign-in via email-OTP magic-link + PKCE, completed on a dedicated callback page. A build bug (WXT's Vite `envDir` defaulting to `apps/extension` instead of the monorepo root, so real Supabase credentials never reached the bundle) was caught by manual testing and fixed. Two-user RLS test re-run today against the fully-migrated remote project: each user sees only their own row; a direct cross-user `SELECT`, `UPDATE`, and `INSERT` (by id) are all rejected by RLS itself — empty result sets / a `42501 row-level security policy` error, not merely absent from the app UI; self-promotion to `tier=premium` is separately rejected by the protect-tier trigger; anon access returns nothing.
 
 ## Still open
 
