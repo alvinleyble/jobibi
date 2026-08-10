@@ -1,6 +1,6 @@
 # Jobibi — Project Build Progress
 
-**Current state:** Phase 1 complete (S1–S3 shipped). Phase 2 (S4) is next.
+**Current state:** Phase 1 complete (S1–S3b shipped). Phase 2 (S4) is next.
 
 - 2026-08-09 — Product vision received; stack locked (DECISIONS D1–D4: Chrome extension, cloud memory on Supabase, payments deferred, JobStreet/LinkedIn/Indeed first).
 - 2026-08-09 — Documentation drafted (PRODUCT, ARCHITECTURE, DECISIONS, build plan v0.1).
@@ -27,6 +27,8 @@
 
 - 2026-08-10 — **S3 completed.** `documents`, `memory_chunks`, and `sensitive_facts` tables migrated via the Supabase CLI (RLS-enabled from creation, matching the S2 pattern), plus a private `documents` Storage bucket scoped per-user by folder. A new `ingest` Edge Function extracts text (txt directly, docx via a hand-rolled zip+XML text-run parser, pdf via `unpdf`), chunks it (`packages/shared/src/ingestion/chunk.ts`), embeds each chunk in-process with the Edge Runtime's built-in gte-small model (D5c — no network call), and writes `documents` + `memory_chunks` rows, all under the caller's own JWT (no service-role writes). The side panel gained an upload flow, the sixty-second four-fact intake (writing directly to `sensitive_facts` under RLS), and a debug list showing documents/chunk counts/facts. Chunking and extraction are unit-tested (21 cases, including a programmatically-built minimal PDF fixture so no binary fixture is checked in). Verified against the real linked project: a scripted two-user check confirmed cross-user Storage RLS rejects writes into another user's folder, upload→ingest produced a resume's chunks with 384-dim embeddings, and the four facts round-tripped — then the test data was deleted.
 
+- 2026-08-10 — **S3b completed.** Cover letters can now be pasted as freetext instead of uploaded (resumes and transcripts stay upload-only). `documents.storage_path` is now nullable to represent a pasted document; the `ingest` Edge Function accepts a `{ text, kind }` request shape that skips download/extract and feeds validated text straight into the existing chunk→embed pipeline. Validation and provenance logic live in `packages/shared/src/ingestion/paste.ts`, unit-tested (8 cases).
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -38,6 +40,6 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1, S2, and S3 shipped (S3 on branch `fm/jobibi-s3-ingestion-intake`, pending merge). The extension has auth, document upload, four-fact intake, and a memory-bank debug list; Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts` (all RLS-enabled), a private `documents` Storage bucket, and the `ingest` Edge Function.
+S1, S2, S3, and S3b shipped (S3b on branch `fm/jobibi-s3b-freetext-paste-cover-letter`, pending merge). The extension has auth, document upload or paste (cover letters only), four-fact intake, and a memory-bank debug list; Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts` (all RLS-enabled), a private `documents` Storage bucket, and the `ingest` Edge Function.
 
 **Next step:** S4. JobStreet question extraction + confident mapping.

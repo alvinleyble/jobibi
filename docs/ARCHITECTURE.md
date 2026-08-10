@@ -99,7 +99,7 @@ Free tier: Copy. Premium: Copy + Insert (fills the field; user still reviews and
 | Table | Holds | Key columns |
 |---|---|---|
 | `profiles` | The user | auth id, display name, locale, tier |
-| `documents` | Uploads | file ref, kind (resume/cover/transcript), extracted text, parsed_at |
+| `documents` | Uploads and pasted cover letters | file ref (nullable — null for pasted text), kind (resume/cover/transcript), extracted text, parsed_at |
 | `memory_chunks` | Searchable pieces of history | text, embedding, source ref, type (experience/skill/story/preference/gap_answer), freshness_at |
 | `applications` | Each application the user works | company, role, site, url hash, status, submitted_at |
 | `qa_pairs` | Every question the user answered | question_norm, embedding, answer_text, application_id, **draft_text**, **origin**, **edit_distance** — **the growth loop** |
