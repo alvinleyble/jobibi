@@ -31,3 +31,6 @@ supabase/.env
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Personal local test files
+.jobibi-personal-files/

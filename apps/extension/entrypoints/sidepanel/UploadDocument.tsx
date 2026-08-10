@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { DOCUMENT_KINDS, type DocumentKind } from '@jobibi/shared';
+import { describeIngestError } from './ingestError';
 import { supabase } from './supabase';
 
 const KIND_LABELS: Record<DocumentKind, string> = {
@@ -54,7 +55,7 @@ function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
     );
     if (ingestError || !data) {
       setStatus('error');
-      setError(ingestError?.message ?? 'Ingestion failed.');
+      setError(ingestError ? await describeIngestError(ingestError) : 'Ingestion failed.');
       return;
     }
 
