@@ -40,6 +40,6 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1, S2, S3, and S3b shipped (S3b on branch `fm/jobibi-s3b-freetext-paste-cover-letter`, pending merge). The extension has auth, document upload or paste (cover letters only), four-fact intake, and a memory-bank debug list; Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts` (all RLS-enabled), a private `documents` Storage bucket, and the `ingest` Edge Function.
+S1, S2, S3, and S3b shipped (S3b merged to `main` via #8). The extension has auth, document upload or paste (cover letters only), four-fact intake, and a memory-bank debug list; Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts` (all RLS-enabled), a private `documents` Storage bucket, and the `ingest` Edge Function.
 
 **Next step:** S4. JobStreet question extraction + confident mapping.
