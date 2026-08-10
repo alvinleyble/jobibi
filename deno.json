@@ -1,0 +1,18 @@
+{
+  "nodeModulesDir": "none",
+  "compilerOptions": {
+    "lib": ["deno.window"]
+  },
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.45.0",
+    "fflate": "npm:fflate@0.8.3",
+    "unpdf": "npm:unpdf@0.12.2"
+  },
+  "exclude": [
+    "apps",
+    "node_modules",
+    ".output",
+    ".wxt",
+    "**/*.test.ts"
+  ]
+}
