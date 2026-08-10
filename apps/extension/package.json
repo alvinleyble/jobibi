@@ -13,7 +13,8 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "test": "vitest run"
   },
   "dependencies": {
     "@jobibi/shared": "workspace:*",
@@ -28,6 +29,7 @@
     "@wxt-dev/module-react": "^1.1.5",
     "tailwindcss": "^4.1.16",
     "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
     "web-ext": "^10.5.0",
     "wxt": "^0.21.3"
   }
