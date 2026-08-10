@@ -10,17 +10,23 @@ import { createClient } from '@supabase/supabase-js';
 import { DOCUMENT_KINDS, type DocumentKind } from '../../../packages/shared/src/index.ts';
 import { chunkText } from '../../../packages/shared/src/ingestion/chunk.ts';
 import { detectFormat, extractText } from '../../../packages/shared/src/ingestion/extract.ts';
+import { pastedDocumentProvenance, validatePaste } from '../../../packages/shared/src/ingestion/paste.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
 };
 
-interface IngestRequest {
+interface FileIngestRequest {
   storagePath: string;
   kind: DocumentKind;
   fileName: string;
   mimeType: string;
+}
+
+interface PasteIngestRequest {
+  text: string;
+  kind: DocumentKind;
 }
 
 function jsonResponse(body: unknown, status: number) {
@@ -30,13 +36,23 @@ function jsonResponse(body: unknown, status: number) {
   });
 }
 
-function isIngestRequest(body: unknown): body is IngestRequest {
+function isFileIngestRequest(body: unknown): body is FileIngestRequest {
   if (!body || typeof body !== 'object') return false;
   const b = body as Record<string, unknown>;
   return (
     typeof b.storagePath === 'string' &&
     typeof b.fileName === 'string' &&
     typeof b.mimeType === 'string' &&
+    typeof b.kind === 'string' &&
+    (DOCUMENT_KINDS as readonly string[]).includes(b.kind)
+  );
+}
+
+function isPasteIngestRequest(body: unknown): body is PasteIngestRequest {
+  if (!body || typeof body !== 'object') return false;
+  const b = body as Record<string, unknown>;
+  return (
+    typeof b.text === 'string' &&
     typeof b.kind === 'string' &&
     (DOCUMENT_KINDS as readonly string[]).includes(b.kind)
   );
@@ -68,35 +84,59 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => null);
-    if (!isIngestRequest(body)) {
-      return jsonResponse({ error: 'storagePath, kind, fileName, and mimeType are required' }, 400);
-    }
-
-    if (!body.storagePath.startsWith(`${user.id}/`)) {
-      return jsonResponse({ error: 'storagePath must be under the caller\'s own folder' }, 403);
-    }
-
-    const format = detectFormat(body.mimeType, body.fileName);
-    if (!format) {
-      return jsonResponse({ error: `Unsupported file type: ${body.mimeType}` }, 400);
-    }
-
-    const { data: fileBlob, error: downloadError } = await supabase.storage
-      .from('documents')
-      .download(body.storagePath);
-    if (downloadError || !fileBlob) {
-      return jsonResponse({ error: `Could not read uploaded file: ${downloadError?.message ?? 'not found'}` }, 404);
-    }
-    const bytes = new Uint8Array(await fileBlob.arrayBuffer());
 
     let text: string;
-    try {
-      text = await extractText(bytes, format);
-    } catch (err) {
-      return jsonResponse({ error: `Could not extract text: ${(err as Error).message}` }, 422);
-    }
-    if (!text.trim()) {
-      return jsonResponse({ error: 'No extractable text found in this file' }, 422);
+    let storagePath: string | null;
+    let fileName: string;
+    let mimeType: string;
+    let kind: DocumentKind;
+
+    if (isPasteIngestRequest(body)) {
+      kind = body.kind;
+      const validation = validatePaste(body.text, kind);
+      if (!validation.ok) {
+        return jsonResponse({ error: validation.error }, 422);
+      }
+      text = validation.text!;
+      const provenance = pastedDocumentProvenance(kind);
+      storagePath = provenance.storagePath;
+      fileName = provenance.fileName;
+      mimeType = provenance.mimeType;
+    } else if (isFileIngestRequest(body)) {
+      kind = body.kind;
+      if (!body.storagePath.startsWith(`${user.id}/`)) {
+        return jsonResponse({ error: 'storagePath must be under the caller\'s own folder' }, 403);
+      }
+
+      const format = detectFormat(body.mimeType, body.fileName);
+      if (!format) {
+        return jsonResponse({ error: `Unsupported file type: ${body.mimeType}` }, 400);
+      }
+
+      const { data: fileBlob, error: downloadError } = await supabase.storage
+        .from('documents')
+        .download(body.storagePath);
+      if (downloadError || !fileBlob) {
+        return jsonResponse({ error: `Could not read uploaded file: ${downloadError?.message ?? 'not found'}` }, 404);
+      }
+      const bytes = new Uint8Array(await fileBlob.arrayBuffer());
+
+      try {
+        text = await extractText(bytes, format);
+      } catch (err) {
+        return jsonResponse({ error: `Could not extract text: ${(err as Error).message}` }, 422);
+      }
+      if (!text.trim()) {
+        return jsonResponse({ error: 'No extractable text found in this file' }, 422);
+      }
+      storagePath = body.storagePath;
+      fileName = body.fileName;
+      mimeType = body.mimeType;
+    } else {
+      return jsonResponse(
+        { error: 'Either { storagePath, kind, fileName, mimeType } or { text, kind } is required' },
+        400,
+      );
     }
 
     const chunks = chunkText(text);
@@ -108,10 +148,10 @@ Deno.serve(async (req) => {
       .from('documents')
       .insert({
         user_id: user.id,
-        kind: body.kind,
-        file_name: body.fileName,
-        mime_type: body.mimeType,
-        storage_path: body.storagePath,
+        kind,
+        file_name: fileName,
+        mime_type: mimeType,
+        storage_path: storagePath,
         extracted_text: text,
         parsed_at: new Date().toISOString(),
       })
