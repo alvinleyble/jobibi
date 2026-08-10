@@ -35,6 +35,7 @@ These are the decisions a reasonable engineer would get wrong by instinct. Each 
 - **AI:** OpenAI GPT-5.6 Luna for every model call, via strict JSON schema output. Key lives in Edge Function secrets only — the extension ships zero secrets.
 - **Embeddings:** gte-small, in-process inside Edge Functions. Not a network call.
 - **Database:** Supabase Postgres + pgvector, RLS on every table from table zero.
+- **Headless-Chrome UI verification:** `scripts/verify-chrome-lane/` builds the extension and drives the S3 UI (sign-in through upload/intake/memory-bank) in real headless Chrome-for-Testing — see its README for usage and env vars.
 - **Extension pages reachable from outside the extension** (e.g. `callback.html`, the magic-link redirect target) must be declared under `web_accessible_resources` in `apps/extension/wxt.config.ts`. Without it, Chrome and Edge block the top-level navigation with `ERR_BLOCKED_BY_CLIENT` — this is a platform restriction on cross-origin navigation into extension pages, not a bug in the redirect itself. `apps/extension/scripts/check-manifest.mjs` runs as a `postbuild` step to catch a regression.
 
 ## Supabase — read before touching schema
