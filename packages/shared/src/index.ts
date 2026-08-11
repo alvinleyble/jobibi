@@ -23,3 +23,14 @@ export type {
   MappingConfidence,
 } from './adapters/types.ts';
 export { extractJobStreetQuestions } from './adapters/jobstreet.ts';
+
+// Capture helpers (S6) — lightweight, safe for extension bundle
+export {
+  deriveOrigin,
+  levenshtein,
+  verifySingleMapping,
+  verifyCaptureMappings,
+  findSeenBefore,
+  scoreNearDuplicate,
+} from './capture/capture.ts';
+export type { QaOrigin, OriginResult, MappingVerifyResult } from './capture/capture.ts';

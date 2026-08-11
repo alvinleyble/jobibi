@@ -57,6 +57,20 @@ const SuggestResponseSchema = z.object({
     .nullable()
     .optional(),
   sensitiveVia: z.enum(['rule', 'retrieval', 'both']).nullable().optional(),
+  // seen-before (S6 D12) — prior answer for near-duplicate question
+  seenBefore: z
+    .object({
+      answerText: z.string(),
+      questionLabel: z.string(),
+      origin: z.string(),
+      sourceLabel: z.string(),
+      similarity: z.number(),
+      defaultIsPrior: z.boolean(),
+      priorCompany: z.string().nullable().optional(),
+      priorRole: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 function jsonResponse(body: unknown, status: number) {
@@ -151,6 +165,113 @@ Deno.serve(async (req) => {
 
     const questionNorm = normalizeQuestion(parsed.data.question);
     const jobText = `${parsed.data.jobContext.role} ${parsed.data.jobContext.company}`;
+
+    // ── S6 seen-before check (D12) — surface prior answer for near-duplicate ──
+    // Runs before retrieval/gate so we can attach prior even when gate would refuse.
+    // Best-effort; failures do not block drafting.
+    let seenBefore: {
+      answerText: string;
+      questionLabel: string;
+      origin: string;
+      sourceLabel: string;
+      similarity: number;
+      defaultIsPrior: boolean;
+      priorCompany: string | null;
+      priorRole: string | null;
+    } | null = null;
+    try {
+      const { data: qaRows } = await supabase
+        .from('qa_pairs')
+        .select('id, question_label, question_norm, answer_text, origin, application_id, embedding')
+        .eq('user_id', user.id)
+        .limit(100);
+      const candidates = (qaRows as unknown as {
+        id: string; question_label: string; question_norm: string; answer_text: string; origin: string; application_id: string | null; embedding: unknown;
+      }[] | null) ?? [];
+      if (candidates.length) {
+        // Score each candidate via keywordOverlap; hybrid if embeddings available
+        let qEmbForSeen: number[] | null = null;
+        try {
+          qEmbForSeen = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true });
+        } catch { qEmbForSeen = null; }
+        const parseEmbQuick = (e: unknown): number[] | null => {
+          if (!e) return null;
+          if (Array.isArray(e)) return e as number[];
+          if (typeof e === 'string') {
+            try { const p = JSON.parse(e); if (Array.isArray(p)) return p as number[]; } catch { /* */ }
+            const nums = (e as string).replace(/^\[|\]$/g, '').split(',').map((s) => Number(s.trim())).filter(Number.isFinite);
+            if (nums.length) return nums;
+          }
+          return null;
+        };
+        let best: typeof candidates[0] | null = null;
+        let bestScore = -1;
+        for (const c of candidates) {
+          const kw = keywordOverlap(parsed.data.question, c.question_label);
+          let cos = kw;
+          if (qEmbForSeen) {
+            const emb = parseEmbQuick(c.embedding);
+            if (emb) { const v = cosine(qEmbForSeen, emb); if (Number.isFinite(v)) cos = v; }
+          }
+          const hybrid = hybridScore(cos, kw);
+          if (hybrid > bestScore) { bestScore = hybrid; best = c; }
+          // also check keyword alone high even if cosine low
+          if (kw >= 0.95 && kw > bestScore) { bestScore = kw; best = c; }
+        }
+        const NEAR_DUP_THRESHOLD = 0.85;
+        const KEYWORD_NEAR_DUP = 0.8;
+        const isNearDup = best && (bestScore >= NEAR_DUP_THRESHOLD || keywordOverlap(parsed.data.question, best.question_label) >= KEYWORD_NEAR_DUP);
+        if (isNearDup && best) {
+          // fetch prior application for role-match and source label
+          let priorCompany: string | null = null;
+          let priorRole: string | null = null;
+          if (best.application_id) {
+            const { data: app } = await supabase.from('applications').select('company, role_title').eq('id', best.application_id).eq('user_id', user.id).maybeSingle();
+            const row = app as unknown as { company: string | null; role_title: string | null } | null;
+            priorCompany = row?.company ?? null;
+            priorRole = row?.role_title ?? null;
+          }
+          // role-match to decide default: compare current jobText vs prior role/company
+          const currentJobText2 = `${parsed.data.jobContext.role} ${parsed.data.jobContext.company}`;
+          const priorJobText = priorRole || priorCompany ? `${priorRole ?? ''} ${priorCompany ?? ''}`.trim() : '';
+          let defaultIsPrior = false;
+          if (priorJobText) {
+            const roleKw = keywordOverlap(currentJobText2, priorJobText);
+            let roleCos = roleKw;
+            if (qEmbForSeen) {
+              try {
+                const priorEmb = await new Supabase.ai.Session('gte-small').run(priorJobText, { mean_pool: true, normalize: true });
+                const curEmb = await new Supabase.ai.Session('gte-small').run(currentJobText2, { mean_pool: true, normalize: true });
+                const v = cosine(curEmb, priorEmb);
+                if (Number.isFinite(v)) roleCos = v;
+              } catch { /* fallback to keyword */ }
+            }
+            const roleHybrid = hybridScore(roleCos, roleKw);
+            const ROLE_THRESHOLD_LOCAL = 0.35;
+            defaultIsPrior = roleHybrid >= ROLE_THRESHOLD_LOCAL;
+          } else {
+            // No prior role info, default to showing prior as primary (conservative)
+            defaultIsPrior = true;
+          }
+          const sourceLabel = priorCompany && priorRole
+            ? `Your ${priorCompany} — ${priorRole} application`
+            : priorCompany ? `Your ${priorCompany} application` : priorRole ? `Your ${priorRole} application` : 'Your prior answer';
+          seenBefore = {
+            answerText: best.answer_text,
+            questionLabel: best.question_label,
+            origin: best.origin,
+            sourceLabel,
+            similarity: bestScore,
+            defaultIsPrior,
+            priorCompany,
+            priorRole,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[suggest] seen-before lookup failed', e);
+      seenBefore = null;
+    }
 
     // ── S5c sensitive check (D17) — must run before retrieval/gate/drafting ──
     // Union: rule OR retrieval against typed sensitive_facts.
@@ -311,6 +432,7 @@ Deno.serve(async (req) => {
           questionMatch: safeQ,
           roleMatch: safeR,
           refuseMessage: refuseMessageFor(),
+          seenBefore: seenBefore ?? null,
         }),
         200,
       );
@@ -339,6 +461,7 @@ Deno.serve(async (req) => {
           gapQuestion,
           anchoredChunkId,
           anchoredChunkText: anchorText.slice(0, 400),
+          seenBefore: seenBefore ?? null,
         }),
         200,
       );
@@ -420,6 +543,7 @@ Deno.serve(async (req) => {
         answer,
         skeleton,
         sources,
+        seenBefore: seenBefore ?? null,
       }),
       200,
     );
