@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
       const all = (chunks as unknown as { id: string; text: string; embedding: number[] | string | null }[] | null) ?? [];
       const filtered = all.filter((c) => c.id !== memoryChunkId);
       let qEmb: number[] | null = null;
-      try { qEmb = await new Supabase.ai.Session('gte-small').run(originalQuestion); } catch {}
+      try { qEmb = await new Supabase.ai.Session('gte-small').run(originalQuestion, { mean_pool: true, normalize: true }); } catch {}
       const scored = filtered.map((c) => {
         const kw = keywordOverlap(originalQuestion, c.text);
         let cos = kw;
