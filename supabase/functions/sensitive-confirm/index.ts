@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
       // Find fact to confirm: by factId if given, else latest of kind
       let fact: { id: string; kind: string; value: string; stated_at: string } | null = null;
       if (factId) {
-        const { data } = await supabase.from('sensitive_facts').select('id, kind, value, stated_at').eq('id', factId).eq('user_id', user.id).maybeSingle();
+        const { data } = await supabase.from('sensitive_facts').select('id, kind, value, stated_at').eq('id', factId).eq('user_id', user.id).eq('kind', kind).maybeSingle();
         fact = data as unknown as typeof fact | null;
       } else {
         const { data } = await supabase
