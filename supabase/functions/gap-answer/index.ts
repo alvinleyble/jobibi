@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
 
     let embedding: number[] | null = null;
     try {
-      embedding = await new Supabase.ai.Session('gte-small').run(trimmedAnswer);
+      embedding = await new Supabase.ai.Session('gte-small').run(trimmedAnswer, { mean_pool: true, normalize: true });
     } catch {
       embedding = null;
     }
