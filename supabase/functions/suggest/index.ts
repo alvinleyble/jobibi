@@ -1,6 +1,6 @@
 // S5b: suggest — gate (draft/ask/refuse), draft, gap-question (D10, D15, D8, D14)
 // Gate decides; model never decides refuse. On ask Luna words one anchored gap question
-// after code has already decided. Sensitive handling (S5c) stays ahead but is S5c.
+// after code has already decided. S5c sensitive handling runs ahead of drafting (D17).
 
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
@@ -8,6 +8,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { decideGate } from '../../../packages/shared/src/gate/gate.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
+import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -28,7 +29,7 @@ const SuggestRequestSchema = z.object({
 });
 
 const SuggestResponseSchema = z.object({
-  outcome: z.enum(['draft', 'ask', 'refuse']),
+  outcome: z.enum(['draft', 'ask', 'refuse', 'confirm']),
   questionNorm: z.string(),
   questionMatch: z.number(),
   roleMatch: z.number(),
@@ -42,6 +43,20 @@ const SuggestResponseSchema = z.object({
   anchoredChunkText: z.string().optional(),
   // refuse
   refuseMessage: z.string().optional(),
+  // confirm (S5c sensitive)
+  sensitiveKind: z.string().optional(),
+  sensitiveFact: z
+    .object({
+      id: z.string(),
+      kind: z.string(),
+      value: z.string(),
+      stated_at: z.string(),
+      confirmed_at: z.string().nullable().optional(),
+      provenanceLine: z.string(),
+    })
+    .nullable()
+    .optional(),
+  sensitiveVia: z.enum(['rule', 'retrieval', 'both']).nullable().optional(),
 });
 
 function jsonResponse(body: unknown, status: number) {
@@ -136,6 +151,70 @@ Deno.serve(async (req) => {
 
     const questionNorm = normalizeQuestion(parsed.data.question);
     const jobText = `${parsed.data.jobContext.role} ${parsed.data.jobContext.company}`;
+
+    // ── S5c sensitive check (D17) — must run before retrieval/gate/drafting ──
+    // Union: rule OR retrieval against typed sensitive_facts.
+    // Sensitive questions never reach Luna or Auto-Fill.
+    try {
+      const { data: factRows, error: factErr } = await supabase
+        .from('sensitive_facts')
+        .select('id, kind, value, stated_at, confirmed_at, source_application_id')
+        .eq('user_id', user.id)
+        .order('stated_at', { ascending: false })
+        .limit(50);
+      if (factErr) throw factErr;
+      const facts = (factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? [];
+      const typedFacts = facts.map((r) => ({
+        id: r.id,
+        kind: r.kind as import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact['kind'],
+        value: r.value,
+        stated_at: r.stated_at,
+        confirmed_at: r.confirmed_at,
+        source_application_id: r.source_application_id,
+      }));
+      const sensitive = detectSensitiveUnion(parsed.data.question, typedFacts);
+      if (sensitive.isSensitive) {
+        // Build provenance for the matched fact, if any
+        let factPayload: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null = null;
+        if (sensitive.fact) {
+          factPayload = {
+            id: sensitive.fact.id,
+            kind: sensitive.fact.kind,
+            value: sensitive.fact.value,
+            stated_at: sensitive.fact.stated_at,
+            confirmed_at: sensitive.fact.confirmed_at ?? null,
+            provenanceLine: buildProvenanceLine(sensitive.fact),
+          };
+        }
+        return jsonResponse(
+          SuggestResponseSchema.parse({
+            outcome: 'confirm',
+            questionNorm,
+            questionMatch: 0,
+            roleMatch: 0,
+            sensitiveKind: sensitive.kind ?? undefined,
+            sensitiveFact: factPayload,
+            sensitiveVia: sensitive.via,
+          }),
+          200,
+        );
+      }
+    } catch (e) {
+      // Fail-closed per D17 + captain decision: on DB/check error, do not draft
+      console.error('[suggest] sensitive check failed (fail-closed)', e);
+      return jsonResponse(
+        SuggestResponseSchema.parse({
+          outcome: 'confirm',
+          questionNorm,
+          questionMatch: 0,
+          roleMatch: 0,
+          sensitiveKind: undefined,
+          sensitiveFact: null,
+          sensitiveVia: null,
+        }),
+        200,
+      );
+    }
 
     type MemRow = { id: string | null; text: string; embedding: number[] | null };
     let memoryRows: MemRow[] = [];

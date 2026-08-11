@@ -380,6 +380,9 @@ import_map = "../deno.json"
 [functions.gap-answer]
 import_map = "../deno.json"
 
+[functions.sensitive-confirm]
+import_map = "../deno.json"
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

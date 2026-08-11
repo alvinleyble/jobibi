@@ -3,7 +3,7 @@ import { supabase } from './supabase';
 import type { ExtractedQuestion, ExtractionResult } from '@jobibi/shared';
 
 interface SuggestState {
-  outcome?: 'draft' | 'ask' | 'refuse';
+  outcome?: 'draft' | 'ask' | 'refuse' | 'confirm';
   answer?: string;
   skeleton?: string[];
   sources?: { kind: string; label: string; ref: string }[];
@@ -13,6 +13,9 @@ interface SuggestState {
   anchoredChunkText?: string;
   questionMatch?: number;
   roleMatch?: number;
+  sensitiveKind?: string;
+  sensitiveFact?: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null;
+  sensitiveVia?: 'rule' | 'retrieval' | 'both' | null;
   error?: string;
   loading?: boolean;
 }
@@ -44,6 +47,9 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
     setState({ loading: true });
     setGapError(null);
     setGapInput('');
+    setConfirmError(null);
+    setConfirmDone(null);
+    setShowUpdate(false);
     try {
       const { data, error } = await supabase.functions.invoke('suggest', {
         body: {
@@ -70,6 +76,9 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
         anchoredChunkText: data.anchoredChunkText,
         questionMatch: data.questionMatch,
         roleMatch: data.roleMatch,
+        sensitiveKind: data.sensitiveKind,
+        sensitiveFact: data.sensitiveFact ?? null,
+        sensitiveVia: data.sensitiveVia ?? null,
       });
     } catch (e) {
       setState({ error: getErrorMessage(e) });
@@ -122,6 +131,83 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
       setGapError(getErrorMessage(e));
     } finally {
       setGapLoading(false);
+    }
+  };
+
+  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [confirmDone, setConfirmDone] = useState<string | null>(null);
+  const [updateValue, setUpdateValue] = useState('');
+  const [showUpdate, setShowUpdate] = useState(false);
+
+  const onConfirm = async () => {
+    if (!state.sensitiveKind) return;
+    setConfirmLoading(true);
+    setConfirmError(null);
+    setConfirmDone(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('sensitive-confirm', {
+        body: { kind: state.sensitiveKind, action: 'confirm', factId: state.sensitiveFact?.id },
+      });
+      if (error) {
+        const msg = await extractSuggestError(error);
+        setConfirmError(msg);
+        setConfirmLoading(false);
+        return;
+      }
+      setConfirmDone('Confirmed — updated timestamp.');
+      // Refresh local fact with returned data
+      if (data?.value) {
+        setState((prev) => ({
+          ...prev,
+          sensitiveFact: prev.sensitiveFact
+            ? { ...prev.sensitiveFact, value: data.value as string, confirmed_at: (data.confirmed_at as string) ?? new Date().toISOString() }
+            : prev.sensitiveFact,
+        }));
+      }
+    } catch (e) {
+      setConfirmError(getErrorMessage(e));
+    } finally {
+      setConfirmLoading(false);
+    }
+  };
+
+  const onUpdate = async () => {
+    const trimmed = updateValue.trim();
+    if (!trimmed) {
+      setConfirmError('Please enter a value.');
+      return;
+    }
+    if (!state.sensitiveKind) {
+      setConfirmError('Could not verify this field — please try Suggest again.');
+      return;
+    }
+    setConfirmLoading(true);
+    setConfirmError(null);
+    setConfirmDone(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('sensitive-confirm', {
+        body: { kind: state.sensitiveKind, action: 'update', value: trimmed },
+      });
+      if (error) {
+        const msg = await extractSuggestError(error);
+        setConfirmError(msg);
+        setConfirmLoading(false);
+        return;
+      }
+      setConfirmDone(`Updated to "${trimmed}".`);
+      setState((prev) => ({
+        ...prev,
+        sensitiveFact: prev.sensitiveFact
+          ? { ...prev.sensitiveFact, value: trimmed, stated_at: (data.stated_at as string) ?? new Date().toISOString(), confirmed_at: null }
+          : { id: (data.id as string) ?? 'new', kind: state.sensitiveKind!, value: trimmed, stated_at: (data.stated_at as string) ?? new Date().toISOString(), confirmed_at: null, provenanceLine: `You said ${trimmed} — still true?` },
+      }));
+      setUpdateValue('');
+      setShowUpdate(false);
+    } catch (e) {
+      setConfirmError(getErrorMessage(e));
+    } finally {
+      setConfirmLoading(false);
     }
   };
 
@@ -181,6 +267,94 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
           <p className="mt-1 text-[10px] text-slate-400">
             q:{state.questionMatch?.toFixed(2)} r:{state.roleMatch?.toFixed(2)}
           </p>
+        </div>
+      ) : null}
+      {state.outcome === 'confirm' ? (
+        <div className="rounded border border-violet-200 bg-violet-50 p-2">
+          <p className="text-xs font-medium text-violet-800">Always-confirm — sensitive field</p>
+          {state.sensitiveFact ? (
+            <>
+              <p className="mt-1 text-xs text-slate-800">
+                <span className="font-semibold">{state.sensitiveFact.value}</span>
+              </p>
+              <p className="mt-1 text-xs italic text-slate-600">{state.sensitiveFact.provenanceLine}</p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={onConfirm}
+                  disabled={confirmLoading}
+                  className="rounded bg-violet-700 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {confirmLoading ? 'Saving…' : 'Confirm still true'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowUpdate((v) => !v)}
+                  disabled={confirmLoading}
+                  className="rounded border border-violet-300 bg-white px-2 py-1 text-xs disabled:opacity-50"
+                >
+                  Update
+                </button>
+              </div>
+              {showUpdate ? (
+                <div className="mt-2 flex flex-col gap-1">
+                  <input
+                    type="text"
+                    value={updateValue}
+                    onChange={(e) => setUpdateValue(e.target.value)}
+                    placeholder={`New ${state.sensitiveKind} value`}
+                    className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+                    disabled={confirmLoading}
+                  />
+                  <button
+                    type="button"
+                    onClick={onUpdate}
+                    disabled={confirmLoading || !updateValue.trim()}
+                    className="self-start rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                  >
+                    Save update
+                  </button>
+                </div>
+              ) : null}
+              {confirmError ? <p className="mt-1 text-xs text-red-600">{confirmError}</p> : null}
+              {confirmDone ? <p className="mt-1 text-xs text-emerald-600">{confirmDone}</p> : null}
+              <p className="mt-2 text-[10px] text-slate-400">This field is never drafted or auto-filled.</p>
+            </>
+          ) : !state.sensitiveKind ? (
+            <>
+              <p className="mt-1 text-xs text-slate-700">
+                This looks like a sensitive question, but we couldn&apos;t verify it just now.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">Please try Suggest again.</p>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-xs text-slate-700">
+                This looks like a sensitive question ({state.sensitiveKind}), but you haven&apos;t set a value for it yet.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">Set it in the Sixty-second intake, then confirm here.</p>
+              <div className="mt-2 flex gap-2">
+                <input
+                  type="text"
+                  value={updateValue}
+                  onChange={(e) => setUpdateValue(e.target.value)}
+                  placeholder={`New ${state.sensitiveKind} value`}
+                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+                  disabled={confirmLoading}
+                />
+                <button
+                  type="button"
+                  onClick={onUpdate}
+                  disabled={confirmLoading || !updateValue.trim()}
+                  className="rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+              {confirmError ? <p className="mt-1 text-xs text-red-600">{confirmError}</p> : null}
+              {confirmDone ? <p className="mt-1 text-xs text-emerald-600">{confirmDone}</p> : null}
+            </>
+          )}
         </div>
       ) : null}
       {state.outcome === 'draft' ? (
