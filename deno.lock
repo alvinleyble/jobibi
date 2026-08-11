@@ -3,7 +3,8 @@
   "specifiers": {
     "npm:@supabase/supabase-js@2.45.0": "2.45.0",
     "npm:fflate@0.8.3": "0.8.3",
-    "npm:unpdf@0.12.2": "0.12.2"
+    "npm:unpdf@0.12.2": "0.12.2",
+    "npm:zod@4.1.13": "4.1.13"
   },
   "npm": {
     "@mapbox/node-pre-gyp@1.0.11": {
@@ -416,13 +417,17 @@
     },
     "yallist@4.0.0": {
       "integrity": "sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A=="
+    },
+    "zod@4.1.13": {
+      "integrity": "sha512-AvvthqfqrAhNH9dnfmrfKzX5upOdjUVJYFqNSlkmGf64gRaTzlPwz99IHYnVs28qYAybvAlBV+H7pn0saFY4Ig=="
     }
   },
   "workspace": {
     "dependencies": [
       "npm:@supabase/supabase-js@2.45.0",
       "npm:fflate@0.8.3",
-      "npm:unpdf@0.12.2"
+      "npm:unpdf@0.12.2",
+      "npm:zod@4.1.13"
     ]
   }
 }
