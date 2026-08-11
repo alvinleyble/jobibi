@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
 
     const payload = {
       model: 'gpt-5.6-luna',
-      max_tokens: MAX_OUTPUT_TOKENS,
+      max_completion_tokens: MAX_OUTPUT_TOKENS,
       response_format: {
         type: 'json_schema',
         json_schema: {
