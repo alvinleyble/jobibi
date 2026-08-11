@@ -140,7 +140,7 @@ Deno.serve(async (req) => {
     type MemRow = { id: string | null; text: string; embedding: number[] | null };
     let memoryRows: MemRow[] = [];
     try {
-      const qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question);
+      const qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true });
       const { data, error } = await supabase.rpc('match_memory_chunks' as unknown as string, {
         query_embedding: qEmbedding,
         match_count: 8,
@@ -164,9 +164,9 @@ Deno.serve(async (req) => {
     }
 
     let qEmbedding: number[] | null = null;
-    try { qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question); } catch {}
+    try { qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true }); } catch {}
     let rEmbedding: number[] | null = null;
-    try { rEmbedding = await new Supabase.ai.Session('gte-small').run(jobText); } catch {}
+    try { rEmbedding = await new Supabase.ai.Session('gte-small').run(jobText, { mean_pool: true, normalize: true }); } catch {}
 
     const sanitize = (n: number) => (Number.isFinite(n) ? n : 0);
     const parseEmbedding = (e: unknown): number[] | null => {
