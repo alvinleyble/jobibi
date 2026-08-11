@@ -1,6 +1,6 @@
 # Jobibi — Project Build Progress
 
-**Current state:** Phase 1 complete (S1–S3b shipped). Phase 2 (S4) is next.
+**Current state:** Phase 2 — S4 shipped (S1–S4 on `main`). S4.5 golden set is next.
 
 - 2026-08-09 — Product vision received; stack locked (DECISIONS D1–D4: Chrome extension, cloud memory on Supabase, payments deferred, JobStreet/LinkedIn/Indeed first).
 - 2026-08-09 — Documentation drafted (PRODUCT, ARCHITECTURE, DECISIONS, build plan v0.1).
@@ -29,6 +29,8 @@
 
 - 2026-08-10 — **S3b completed.** Cover letters can now be pasted as freetext instead of uploaded (resumes and transcripts stay upload-only). `documents.storage_path` is now nullable to represent a pasted document; the `ingest` Edge Function accepts a `{ text, kind }` request shape that skips download/extract and feeds validated text straight into the existing chunk→embed pipeline. Validation and provenance logic live in `packages/shared/src/ingestion/paste.ts`, unit-tested (8 cases).
 
+- 2026-08-11 — **S4 completed.** JobStreet question extraction + confident mapping merged to `main` as `e423139` (`8480c81`). Content script scoped to `*://*.jobstreet.com*/*apply*` (`apps/extension/entrypoints/jobstreet.content.ts`); adapter in `packages/shared/src/adapters/jobstreet.ts` reads live questions, binds each to its field with `confidence` via `CONFIDENCE_BY_SOURCE` (D16) — `label-for 1.0` … `proximity 0.5` + blob/PII guards — unit-tested with 12 fixture-HTML cases. Step-scoped reading via site-generic `/_Q_/` ids drops stepper/profile/job-header noise; grouped checkbox/radio collapsed by `name` dedupe. Side panel (`apps/extension/entrypoints/sidepanel/JobStreetQuestions.tsx`) lists questions live with `high/medium/low` badges, is tab-aware (`tabs.onActivated` + `tabs.onUpdated`) and shows `Open a JobStreet application…` off-apply pages. Paste lane redeployed (`supabase functions deploy ingest --use-api`) and `documents.storage_path` made nullable on remote via Dashboard SQL (migration `20260810001300_documents_storage_path_nullable.sql`); `Add pasted text` → `Added 1 chunk`. Verified: `packages/shared` 41 passed, `apps/extension` 5 passed, `tsc --noEmit` 0, `wxt build` ok, plus live manual pass on a real JobStreet application (homepage `0`, Choose documents `1` cover letter, Employer questions `4` with confident mappings, tab flip clears).
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -40,6 +42,6 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1, S2, S3, and S3b shipped (S3b merged to `main` via #8). The extension has auth, document upload or paste (cover letters only), four-fact intake, and a memory-bank debug list; Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts` (all RLS-enabled), a private `documents` Storage bucket, and the `ingest` Edge Function.
+S1, S2, S3, S3b, and S4 shipped (S4 merged to `main` as `e423139`). The extension has auth, document upload or paste (cover letters only), four-fact intake, a memory-bank debug list, and live JobStreet question extraction with confident field mapping; Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts` (all RLS-enabled), a private `documents` Storage bucket, and the `ingest` Edge Function (redeployed for pasted cover letters).
 
-**Next step:** S4. JobStreet question extraction + confident mapping.
+**Next step:** S4.5. Gate fixture — the golden set (~50 `question × memory → draft/ask/refuse` triples, D15).
