@@ -15,7 +15,7 @@ export default defineConfig({
   manifest: {
     name: 'Jobibi',
     description: 'Draft job-application answers grounded in your own history.',
-    permissions: ['sidePanel', 'storage'],
+    permissions: ['sidePanel', 'storage', 'tabs'],
     // The Supabase magic-link email redirects here as a top-level navigation
     // from outside the extension (the user's mail client/webmail). Chrome and
     // Edge block that navigation with ERR_BLOCKED_BY_CLIENT unless the page is
