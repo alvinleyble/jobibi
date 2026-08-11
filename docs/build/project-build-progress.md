@@ -41,6 +41,7 @@
 
 - **D9** — business entity, blocking only for payments.
 - Philippine Data Privacy Act review before public launch.
+- **S5b ask-gate `ROLE_THRESHOLD` recalibration** — Live headed verification (data/jobibi-s5b-live-headed-verification/report.md §3.1, §6) found that `ROLE_THRESHOLD=0.35` in `packages/shared/src/gate/gate.ts` is miscalibrated: live `roleMatch` never dropped below 0.51 across 72 question×role combinations, so the `ask` gate outcome never fires in production; every request falls through to `draft`. Scheduled recalibration for S6 (no live `gate_decisions` telemetry yet to pick a better number), no later than just before S7 (new traffic sources will re-diversify the score distribution). S6 has no technical dependency on the ask path.
 
 ## All build blockers are now clear
 
