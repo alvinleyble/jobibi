@@ -39,6 +39,7 @@
 
 - **D9** — business entity, blocking only for payments.
 - Philippine Data Privacy Act review before public launch.
+- **S5b ask-gate `ROLE_THRESHOLD` recalibration** — Live headed verification (data/jobibi-s5b-live-headed-verification/report.md §3.1, §6) found that `ROLE_THRESHOLD=0.35` in `packages/shared/src/gate/gate.ts` is miscalibrated: live `roleMatch` never dropped below 0.51 across 72 question×role combinations, so the `ask` gate outcome never fires in production; every request falls through to `draft`. Scheduled recalibration for S6 (no live `gate_decisions` telemetry yet to pick a better number), no later than just before S7 (new traffic sources will re-diversify the score distribution). S6 has no technical dependency on the ask path.
 
 ## All build blockers are now clear
 
@@ -48,4 +49,4 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 S1, S2, S3, S3b, S4, S4.5, and S5a shipped (S4 `e423139`, S4.5 `f1ff005`, S5a `ac561be` → hotfixed `8c96860`). The extension has auth, document upload or paste (cover letters only), four-fact intake, a memory-bank debug list, live JobStreet question extraction with confident field mapping, and per-question `Suggest` → grounded copy card (`answer + skeleton` + `Copy` buttons) or amber refusal (never calls model on refuse). Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts`, `gate_decisions` (all RLS-enabled), a private `documents` Storage bucket, and Edge Functions `ingest` + `suggest` (both deployed, `OPENAI_API_KEY` set, length capped `600`/`900`). Shared has the 50-case golden set and two-axis gate.
 
-**Next step:** S5b. The ask path — anchored gap question, `gap_answers` + chunk into memory.
+**Next step:** S5b. The ask path — anchored gap question, `gap_answers` + chunk into memory. Gate logic is correct and code-only (D10/D15); `ROLE_THRESHOLD` is functionally verified but uncalibrated against live data — recalibration deferred to S6/pre-S7 pending telemetry accumulation (see Still open).
