@@ -1,12 +1,12 @@
-// S5a: suggest — gate, draft, refuse (D15, D10, D8, D14)
-// Every call carries explicit length cap; model never decides refuse.
-// Sensitive handling (S5c union) runs before gate but is S5c, not here.
+// S5b: suggest — gate (draft/ask/refuse), draft, gap-question (D10, D15, D8, D14)
+// Gate decides; model never decides refuse. On ask Luna words one anchored gap question
+// after code has already decided. Sensitive handling (S5c) stays ahead but is S5c.
 
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
-import { decideGate, mockScores } from '../../../packages/shared/src/gate/gate.ts';
+import { decideGate } from '../../../packages/shared/src/gate/gate.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
 
 declare const Supabase: {
@@ -16,6 +16,8 @@ declare const Supabase: {
 const MAX_OUTPUT_TOKENS = 600; // D8: output cost control + field limits
 const MAX_ANSWER_CHARS = 900;
 const MAX_SKELETON_BULLETS = 5;
+const MAX_GAP_QUESTION_CHARS = 180;
+const MAX_GAP_TOKENS = 200;
 
 const SuggestRequestSchema = z.object({
   question: z.string().min(5),
@@ -26,7 +28,7 @@ const SuggestRequestSchema = z.object({
 });
 
 const SuggestResponseSchema = z.object({
-  outcome: z.enum(['draft', 'refuse']),
+  outcome: z.enum(['draft', 'ask', 'refuse']),
   questionNorm: z.string(),
   questionMatch: z.number(),
   roleMatch: z.number(),
@@ -34,6 +36,10 @@ const SuggestResponseSchema = z.object({
   answer: z.string().optional(),
   skeleton: z.array(z.string()).optional(),
   sources: z.array(z.object({ kind: z.string(), label: z.string(), ref: z.string() })).optional(),
+  // ask
+  gapQuestion: z.string().optional(),
+  anchoredChunkId: z.string().nullable().optional(),
+  anchoredChunkText: z.string().optional(),
   // refuse
   refuseMessage: z.string().optional(),
 });
@@ -46,7 +52,67 @@ function jsonResponse(body: unknown, status: number) {
 }
 
 function refuseMessageFor(): string {
-  return "I don't have anything in your history that matches this question, so I won't guess — want to write it yourself or ask me to ask you one short follow-up after S5b ships?";
+  return "I don't have anything in your history that matches this question, so I won't guess — want to write it yourself or answer one short follow-up instead?";
+}
+
+function buildFallbackGapQuestion(anchorText: string, role: string): string {
+  const snippet = anchorText.slice(0, 80).replace(/\s+/g, ' ').trim();
+  const base = snippet
+    ? `You mentioned "${snippet}" — how did that play out for this ${role} role?`
+    : `Can you share a short example that fits this ${role} role?`;
+  return base.slice(0, MAX_GAP_QUESTION_CHARS);
+}
+
+async function generateGapQuestion(
+  apiKey: string,
+  employerQuestion: string,
+  anchorText: string,
+  jobRole: string,
+): Promise<string> {
+  const system = `You are Jobibi. Write ONE short gap question anchored to the user's history snippet. Rules: one sentence, one line, ≤${MAX_GAP_QUESTION_CHARS} chars, ends with ?, references the snippet so the user can answer in seconds without writing an essay. Never answer the employer question. Output JSON only.`;
+  const userContent = `Employer question: ${employerQuestion}\nJob role: ${jobRole}\nAnchored snippet from history:\n${anchorText.slice(0, 400)}\n\nWrite the gap question.`;
+  const payload = {
+    model: 'gpt-5.6-luna',
+    max_completion_tokens: MAX_GAP_TOKENS,
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'gap_question',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
+            gapQuestion: { type: 'string', description: `One-line anchored gap question ≤${MAX_GAP_QUESTION_CHARS} chars, ends with ?` },
+          },
+          required: ['gapQuestion'],
+          additionalProperties: false,
+        },
+      },
+    },
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: userContent },
+    ],
+  };
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) return buildFallbackGapQuestion(anchorText, jobRole);
+  const data = (await resp.json()) as { choices: { message: { content: string } }[] };
+  const content = data.choices?.[0]?.message?.content ?? '';
+  try {
+    const parsed = JSON.parse(content) as { gapQuestion: string };
+    let q = (parsed.gapQuestion ?? '').trim().replace(/\s+/g, ' ');
+    if (!q) return buildFallbackGapQuestion(anchorText, jobRole);
+    if (!q.endsWith('?')) q += '?';
+    if (q.length > MAX_GAP_QUESTION_CHARS) q = q.slice(0, MAX_GAP_QUESTION_CHARS - 1) + '?';
+    q = q.split('\n')[0].trim();
+    return q;
+  } catch {
+    return buildFallbackGapQuestion(anchorText, jobRole);
+  }
 }
 
 Deno.serve(async (req) => {
@@ -71,69 +137,82 @@ Deno.serve(async (req) => {
     const questionNorm = normalizeQuestion(parsed.data.question);
     const jobText = `${parsed.data.jobContext.role} ${parsed.data.jobContext.company}`;
 
-    // Retrieve: top-k hybrid (vector + keyword). For S5a minimal, use hnsw via RPC if available; fallback to keyword.
-    let memoryRows: { text: string; embedding: number[] | null }[] = [];
+    type MemRow = { id: string | null; text: string; embedding: number[] | null };
+    let memoryRows: MemRow[] = [];
     try {
-      const qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question);
-      // Try vector search via SQL function if exists; else fallback
+      const qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true });
       const { data, error } = await supabase.rpc('match_memory_chunks' as unknown as string, {
         query_embedding: qEmbedding,
         match_count: 8,
       } as unknown as Record<string, unknown>);
       if (!error && Array.isArray(data) && data.length) {
-        memoryRows = (data as unknown as { text: string; embedding: number[] }[]).slice(0, 8);
+        memoryRows = (data as unknown as { id?: string; text: string; embedding: number[] | string }[]).map((r) => ({
+          id: (r.id as string) ?? null,
+          text: r.text,
+          embedding: typeof r.embedding === 'string' ? r.embedding as unknown as number[] : (r.embedding as number[] | null),
+        })).slice(0, 8);
       }
     } catch {
       // fallback below
     }
 
     if (memoryRows.length === 0) {
-      // Fallback: keyword scan over user's chunks (small corpora; cold start)
-      const { data: chunks } = await supabase.from('memory_chunks').select('text, embedding').eq('user_id', user.id).limit(100);
-      const all = (chunks as unknown as { text: string; embedding: number[] | null }[] | null) ?? [];
-      // Keep top 8 by keyword overlap
+      const { data: chunks } = await supabase.from('memory_chunks').select('id, text, embedding').eq('user_id', user.id).limit(100);
+      const all = (chunks as unknown as MemRow[] | null) ?? [];
       all.sort((a, b) => keywordOverlap(parsed.data.question, b.text) - keywordOverlap(parsed.data.question, a.text));
-      memoryRows = all.slice(0, 8);
+      memoryRows = all.slice(0, 8).map((r) => ({ id: (r as unknown as { id: string }).id ?? null, text: r.text, embedding: r.embedding }));
     }
 
-    // Build scores for gate: need per-chunk hybrid q vs chunk and role vs chunk
     let qEmbedding: number[] | null = null;
-    try { qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question); } catch {}
+    try {
+      qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true });
+    } catch {
+      // qEmbedding stays null; scoring below falls back to keyword overlap
+    }
     let rEmbedding: number[] | null = null;
-    try { rEmbedding = await new Supabase.ai.Session('gte-small').run(jobText); } catch {}
+    try {
+      rEmbedding = await new Supabase.ai.Session('gte-small').run(jobText, { mean_pool: true, normalize: true });
+    } catch {
+      // rEmbedding stays null; scoring below falls back to keyword overlap
+    }
 
     const sanitize = (n: number) => (Number.isFinite(n) ? n : 0);
     const parseEmbedding = (e: unknown): number[] | null => {
       if (!e) return null;
       if (Array.isArray(e)) return e as number[];
       if (typeof e === 'string') {
-        try { const p = JSON.parse(e); if (Array.isArray(p)) return p as number[]; } catch {}
-        // pgvector may return as string "[0.1,0.2]" without JSON array parse fallback
+        try {
+          const p = JSON.parse(e);
+          if (Array.isArray(p)) return p as number[];
+        } catch {
+          // fall through to manual comma-split parse below
+        }
         const nums = e.replace(/^\[|\]$/g, '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
         if (nums.length) return nums;
       }
       return null;
     };
-    const questionScores: number[] = [];
-    const roleScores: number[] = [];
+
+    type Scored = { row: MemRow; qScore: number; rScore: number };
+    const scored: Scored[] = [];
     for (const row of memoryRows) {
       const emb = parseEmbedding((row as unknown as { embedding: unknown }).embedding);
       const kwQ = keywordOverlap(parsed.data.question, row.text);
       const kwR = keywordOverlap(jobText, row.text);
       const cosQ = qEmbedding && emb ? sanitize(cosine(qEmbedding, emb)) : kwQ;
       const cosR = rEmbedding && emb ? sanitize(cosine(rEmbedding, emb)) : kwR;
-      questionScores.push(sanitize(hybridScore(sanitize(cosQ), sanitize(kwQ))));
-      roleScores.push(sanitize(hybridScore(sanitize(cosR), sanitize(kwR))));
+      scored.push({
+        row,
+        qScore: sanitize(hybridScore(sanitize(cosQ), sanitize(kwQ))),
+        rScore: sanitize(hybridScore(sanitize(cosR), sanitize(kwR))),
+      });
     }
-    questionScores.sort((a, b) => b - a);
-    roleScores.sort((a, b) => b - a);
+    scored.sort((a, b) => b.qScore - a.qScore);
+    const questionScores = scored.map((s) => s.qScore).sort((a, b) => b - a);
+    const roleScores = scored.map((s) => s.rScore).sort((a, b) => b - a);
 
-    // Gate: code decides. If refuse, never call model. If ask, S5a treats as refuse (ask is S5b); so S5a only has draft/refuse.
     const gate = decideGate({ questionScores, roleScores });
-    // Map ask → refuse for S5a (ask ships in S5b)
-    const outcome: 'draft' | 'refuse' = gate.outcome === 'draft' ? 'draft' : 'refuse';
 
-    // Log every decision (D15) before drafting — sanitize NaN
     const safeQ = Number.isFinite(gate.questionMatch) ? gate.questionMatch : 0;
     const safeR = Number.isFinite(gate.roleMatch) ? gate.roleMatch : 0;
     await supabase.from('gate_decisions').insert({
@@ -141,11 +220,11 @@ Deno.serve(async (req) => {
       question_norm: questionNorm,
       question_match: safeQ,
       role_match: safeR,
-      outcome,
+      outcome: gate.outcome,
       user_action: null,
     });
 
-    if (outcome === 'refuse') {
+    if (gate.outcome === 'refuse') {
       return jsonResponse(
         SuggestResponseSchema.parse({
           outcome: 'refuse',
@@ -158,11 +237,38 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Draft via Luna with explicit length cap and strict JSON schema (D8, D14)
+    if (gate.outcome === 'ask') {
+      const anchor = scored[0];
+      const anchorText = anchor?.row.text ?? memoryRows[0]?.text ?? '';
+      const anchoredChunkId = anchor?.row.id ?? null;
+      let gapQuestion: string;
+      const apiKey = Deno.env.get('OPENAI_API_KEY');
+      if (apiKey && anchorText) {
+        gapQuestion = await generateGapQuestion(apiKey, parsed.data.question, anchorText, parsed.data.jobContext.role);
+      } else {
+        gapQuestion = buildFallbackGapQuestion(anchorText, parsed.data.jobContext.role);
+      }
+      gapQuestion = gapQuestion.split('\n')[0].trim().replace(/\s+/g, ' ');
+      if (!gapQuestion.endsWith('?')) gapQuestion = gapQuestion.replace(/[.!]*$/, '') + '?';
+      if (gapQuestion.length > MAX_GAP_QUESTION_CHARS) gapQuestion = gapQuestion.slice(0, MAX_GAP_QUESTION_CHARS - 1) + '?';
+      return jsonResponse(
+        SuggestResponseSchema.parse({
+          outcome: 'ask',
+          questionNorm,
+          questionMatch: safeQ,
+          roleMatch: safeR,
+          gapQuestion,
+          anchoredChunkId,
+          anchoredChunkText: anchorText.slice(0, 400),
+        }),
+        200,
+      );
+    }
+
     const apiKey = Deno.env.get('OPENAI_API_KEY');
     if (!apiKey) return jsonResponse({ error: 'OPENAI_API_KEY not configured' }, 500);
 
-    const snippets = memoryRows.slice(0, 4).map((r) => r.text).join('\n---\n');
+    const snippets = scored.slice(0, 4).map((s) => s.row.text).join('\n---\n');
     const system = `You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below. Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.`;
 
     const payload = {
@@ -224,7 +330,6 @@ Deno.serve(async (req) => {
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'memory_chunk', label: 'Your history', ref: 'memory' }];
 
-    // Enforce length cap if model overshot despite instruction
     if (answer.length > MAX_ANSWER_CHARS) answer = answer.slice(0, MAX_ANSWER_CHARS);
 
     return jsonResponse(
