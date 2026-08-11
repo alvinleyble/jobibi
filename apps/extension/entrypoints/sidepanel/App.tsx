@@ -2,6 +2,7 @@ import { APP_NAME } from '@jobibi/shared';
 import { useSession } from './useSession';
 import SignIn from './SignIn';
 import { supabase } from './supabase';
+import JobStreetQuestions from './JobStreetQuestions';
 import MemoryBank from './MemoryBank';
 
 function App() {
@@ -32,6 +33,7 @@ function App() {
           Sign out
         </button>
       </div>
+      <JobStreetQuestions />
       <MemoryBank userId={session.user.id} />
     </div>
   );

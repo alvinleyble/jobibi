@@ -10,3 +10,14 @@ export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
 export const SENSITIVE_FACT_KINDS = ['salary', 'notice_period', 'work_authorization', 'location'] as const;
 export type SensitiveFactKind = (typeof SENSITIVE_FACT_KINDS)[number];
+
+// Adapter types are lightweight and safe for the extension bundle (no ingestion deps).
+export type {
+  ExtractedQuestion,
+  ExtractionResult,
+  FieldType,
+  JobContext,
+  LabelSource,
+  MappingConfidence,
+} from './adapters/types.ts';
+export { extractJobStreetQuestions } from './adapters/jobstreet.ts';
