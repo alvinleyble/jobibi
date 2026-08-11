@@ -152,7 +152,9 @@ Deno.serve(async (req) => {
           embedding: typeof r.embedding === 'string' ? r.embedding as unknown as number[] : (r.embedding as number[] | null),
         })).slice(0, 8);
       }
-    } catch {}
+    } catch {
+      // fallback below
+    }
 
     if (memoryRows.length === 0) {
       const { data: chunks } = await supabase.from('memory_chunks').select('id, text, embedding').eq('user_id', user.id).limit(100);

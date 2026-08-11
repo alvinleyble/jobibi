@@ -143,7 +143,11 @@ Deno.serve(async (req) => {
       const all = (chunks as unknown as { id: string; text: string; embedding: number[] | string | null }[] | null) ?? [];
       const filtered = all.filter((c) => c.id !== memoryChunkId);
       let qEmb: number[] | null = null;
-      try { qEmb = await new Supabase.ai.Session('gte-small').run(originalQuestion, { mean_pool: true, normalize: true }); } catch {}
+      try {
+        qEmb = await new Supabase.ai.Session('gte-small').run(originalQuestion, { mean_pool: true, normalize: true });
+      } catch {
+        // qEmb stays null; scoring below falls back to keyword overlap
+      }
       const scored = filtered.map((c) => {
         const kw = keywordOverlap(originalQuestion, c.text);
         let cos = kw;
@@ -152,7 +156,9 @@ Deno.serve(async (req) => {
             ? JSON.parse(c.embedding as string) as number[]
             : (c.embedding as number[] | null);
           if (qEmb && emb && Array.isArray(emb)) cos = cosine(qEmb, emb);
-        } catch {}
+        } catch {
+          // cos stays at keyword-overlap fallback
+        }
         const h = hybridScore(cos ?? kw, kw);
         return { text: c.text, score: h };
       });
