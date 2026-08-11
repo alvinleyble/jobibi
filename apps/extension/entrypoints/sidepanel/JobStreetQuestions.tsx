@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ExtractionResult, ExtractedQuestion } from '@jobibi/shared';
+import { SuggestCard } from './SuggestCard';
 
 function confidenceLabel(c: number): string {
   if (c >= 0.95) return 'high';
@@ -14,7 +15,7 @@ function confidenceClass(c: number): string {
   return 'bg-slate-50 text-slate-600 border-slate-200';
 }
 
-function QuestionRow({ q }: { q: ExtractedQuestion }) {
+function QuestionRow({ q, jobContext }: { q: ExtractedQuestion; jobContext: ExtractionResult['jobContext'] }) {
   return (
     <li className="flex flex-col gap-1 rounded border border-slate-200 p-2">
       <div className="flex items-start justify-between gap-2">
@@ -34,6 +35,7 @@ function QuestionRow({ q }: { q: ExtractedQuestion }) {
       {q.context && q.context !== q.label ? (
         <span className="text-[10px] italic text-slate-400">Context: {q.context}</span>
       ) : null}
+      <SuggestCard q={q} jobContext={jobContext} />
     </li>
   );
 }
@@ -163,7 +165,7 @@ export default function JobStreetQuestions() {
           </p>
           <ul className="flex flex-col gap-1.5">
             {questions.map((q) => (
-              <QuestionRow key={q.id} q={q} />
+              <QuestionRow key={q.id} q={q} jobContext={result?.jobContext ?? {}} />
             ))}
           </ul>
         </>
