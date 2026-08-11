@@ -27,8 +27,10 @@ export interface GateResult {
 
 // Tuning constants — calibrated against the 50-case golden set.
 // Relative: top must stand X above mean; floor: genuinely-nothing.
-const ABSOLUTE_FLOOR = 0.28; // below this → refuse regardless of relative gap
-const RELATIVE_GAP = 0.12; // top - mean must exceed this for signal
+// Live gte-small + keyword hybrid scores cluster tighter than synthetic,
+// so gap is smaller live (your NTT page: q ~0.60, r ~0.72, 7 chunks).
+const ABSOLUTE_FLOOR = 0.25; // below this → refuse regardless of relative gap
+const RELATIVE_GAP = 0.04; // top - mean must exceed this for signal (was 0.12, too strict for 7-chunk tight hybrid)
 const ROLE_THRESHOLD = 0.35; // r-high boundary (tuned low to bias ask)
 
 function top(scores: number[]): number {
