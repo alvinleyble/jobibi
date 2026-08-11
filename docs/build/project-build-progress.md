@@ -1,6 +1,6 @@
 # Jobibi — Project Build Progress
 
-**Current state:** Phase 2 — S4 shipped (S1–S4 on `main`). S4.5 golden set is next.
+**Current state:** Phase 2 — S4.5 shipped (S1–S4.5 on `main`). S5a (suggest endpoint) is next.
 
 - 2026-08-09 — Product vision received; stack locked (DECISIONS D1–D4: Chrome extension, cloud memory on Supabase, payments deferred, JobStreet/LinkedIn/Indeed first).
 - 2026-08-09 — Documentation drafted (PRODUCT, ARCHITECTURE, DECISIONS, build plan v0.1).
@@ -31,6 +31,8 @@
 
 - 2026-08-11 — **S4 completed.** JobStreet question extraction + confident mapping merged to `main` as `e423139` (`8480c81`). Content script scoped to `*://*.jobstreet.com*/*apply*` (`apps/extension/entrypoints/jobstreet.content.ts`); adapter in `packages/shared/src/adapters/jobstreet.ts` reads live questions, binds each to its field with `confidence` via `CONFIDENCE_BY_SOURCE` (D16) — `label-for 1.0` … `proximity 0.5` + blob/PII guards — unit-tested with 12 fixture-HTML cases. Step-scoped reading via site-generic `/_Q_/` ids drops stepper/profile/job-header noise; grouped checkbox/radio collapsed by `name` dedupe. Side panel (`apps/extension/entrypoints/sidepanel/JobStreetQuestions.tsx`) lists questions live with `high/medium/low` badges, is tab-aware (`tabs.onActivated` + `tabs.onUpdated`) and shows `Open a JobStreet application…` off-apply pages. Paste lane redeployed (`supabase functions deploy ingest --use-api`) and `documents.storage_path` made nullable on remote via Dashboard SQL (migration `20260810001300_documents_storage_path_nullable.sql`); `Add pasted text` → `Added 1 chunk`. Verified: `packages/shared` 41 passed, `apps/extension` 5 passed, `tsc --noEmit` 0, `wxt build` ok, plus live manual pass on a real JobStreet application (homepage `0`, Choose documents `1` cover letter, Employer questions `4` with confident mappings, tab flip clears).
 
+- 2026-08-11 — **S4.5 completed.** Gate fixture — the golden set merged to `main` as `f1ff005`. Fifty hand-written `(question × memory → draft/ask/refuse)` triples in `packages/shared/src/gate/goldenSet.ts` (18 draft `q-high+r-high`, 16 ask `q-high+r-low` strong-story-wrong-family, 16 refuse `q-low`/absolute floor), each justified by the two axes per the ARCHITECTURE gate table and D15. Schema `goldenSetSchema` (zod `50–60`) enforces shape; `goldenSet.test.ts` covers uniqueness, sorted ids `G001–G050`, distribution `18/16/16`, justification axis check, `q-high+r-low → ask` hard-case, and empty-memory absolute floor. Verified: `packages/shared` 50 passed (6 files), `tsc --noEmit` 0. No pipeline code — hard prerequisite for S5a.
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -42,6 +44,6 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1, S2, S3, S3b, and S4 shipped (S4 merged to `main` as `e423139`). The extension has auth, document upload or paste (cover letters only), four-fact intake, a memory-bank debug list, and live JobStreet question extraction with confident field mapping; Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts` (all RLS-enabled), a private `documents` Storage bucket, and the `ingest` Edge Function (redeployed for pasted cover letters).
+S1, S2, S3, S3b, S4, and S4.5 shipped (S4 `e423139`, S4.5 `f1ff005`). The extension has auth, document upload or paste (cover letters only), four-fact intake, a memory-bank debug list, and live JobStreet question extraction with confident field mapping; Supabase has `profiles`, `documents`, `memory_chunks`, `sensitive_facts` (all RLS-enabled), a private `documents` Storage bucket, and the `ingest` Edge Function (redeployed for pasted cover letters). Shared has the 50-case golden set as the gate tuning target (`packages/shared/src/gate/goldenSet.ts`).
 
-**Next step:** S4.5. Gate fixture — the golden set (~50 `question × memory → draft/ask/refuse` triples, D15).
+**Next step:** S5a. Suggest endpoint — gate, draft, refuse (needs `OPENAI_API_KEY` in Edge Function secrets).
