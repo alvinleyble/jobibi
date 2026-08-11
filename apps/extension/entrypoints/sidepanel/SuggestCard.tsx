@@ -3,11 +3,14 @@ import { supabase } from './supabase';
 import type { ExtractedQuestion, ExtractionResult } from '@jobibi/shared';
 
 interface SuggestState {
-  outcome?: 'draft' | 'refuse';
+  outcome?: 'draft' | 'ask' | 'refuse';
   answer?: string;
   skeleton?: string[];
   sources?: { kind: string; label: string; ref: string }[];
   refuseMessage?: string;
+  gapQuestion?: string;
+  anchoredChunkId?: string | null;
+  anchoredChunkText?: string;
   questionMatch?: number;
   roleMatch?: number;
   error?: string;
@@ -15,12 +18,6 @@ interface SuggestState {
 }
 
 function getErrorMessage(err: unknown): string {
-  if (err && typeof err === 'object' && 'context' in err) {
-    const ctx = (err as { context?: Response }).context;
-    if (ctx && typeof ctx.json === 'function') {
-      // Will be handled async where needed, fallback here
-    }
-  }
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -39,9 +36,14 @@ async function extractSuggestError(err: unknown): Promise<string> {
 
 export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContext: ExtractionResult['jobContext'] }) {
   const [state, setState] = useState<SuggestState>({});
+  const [gapInput, setGapInput] = useState('');
+  const [gapLoading, setGapLoading] = useState(false);
+  const [gapError, setGapError] = useState<string | null>(null);
 
   const onSuggest = async () => {
     setState({ loading: true });
+    setGapError(null);
+    setGapInput('');
     try {
       const { data, error } = await supabase.functions.invoke('suggest', {
         body: {
@@ -63,11 +65,63 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
         skeleton: data.skeleton,
         sources: data.sources,
         refuseMessage: data.refuseMessage,
+        gapQuestion: data.gapQuestion,
+        anchoredChunkId: data.anchoredChunkId ?? null,
+        anchoredChunkText: data.anchoredChunkText,
         questionMatch: data.questionMatch,
         roleMatch: data.roleMatch,
       });
     } catch (e) {
       setState({ error: getErrorMessage(e) });
+    }
+  };
+
+  const onSubmitGap = async () => {
+    const trimmed = gapInput.trim();
+    if (!trimmed) {
+      setGapError('Please write a short answer.');
+      return;
+    }
+    if (trimmed.length < 3) {
+      setGapError('Answer is too short.');
+      return;
+    }
+    setGapLoading(true);
+    setGapError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('gap-answer', {
+        body: {
+          originalQuestion: q.label,
+          gapQuestion: state.gapQuestion,
+          answer: trimmed,
+          jobContext: {
+            role: jobContext.roleTitle ?? 'Unknown role',
+            company: jobContext.company ?? 'Unknown company',
+          },
+          anchoredChunkId: state.anchoredChunkId ?? null,
+        },
+      });
+      if (error) {
+        const msg = await extractSuggestError(error);
+        setGapError(msg);
+        setGapLoading(false);
+        return;
+      }
+      setState((prev) => ({
+        ...prev,
+        outcome: 'draft',
+        answer: data.answer,
+        skeleton: data.skeleton,
+        sources: data.sources,
+        questionMatch: prev.questionMatch,
+        roleMatch: prev.roleMatch,
+        error: undefined,
+      }));
+      setGapInput('');
+    } catch (e) {
+      setGapError(getErrorMessage(e));
+    } finally {
+      setGapLoading(false);
     }
   };
 
@@ -80,7 +134,7 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
       <button
         type="button"
         onClick={onSuggest}
-        disabled={state.loading}
+        disabled={state.loading || gapLoading}
         className="self-start rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
       >
         {state.loading ? 'Thinking…' : state.outcome ? 'Regenerate' : 'Suggest'}
@@ -95,9 +149,46 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
           </p>
         </div>
       ) : null}
+      {state.outcome === 'ask' ? (
+        <div className="rounded border border-sky-200 bg-sky-50 p-2">
+          <p className="text-xs font-medium text-sky-800">One quick follow-up — then I’ll draft</p>
+          <p className="mt-1 text-xs text-slate-800">{state.gapQuestion}</p>
+          {state.anchoredChunkText ? (
+            <p className="mt-1 text-[10px] italic text-slate-500" title={state.anchoredChunkText}>
+              Anchored to: “{state.anchoredChunkText.slice(0, 100)}…”
+            </p>
+          ) : null}
+          <textarea
+            value={gapInput}
+            onChange={(e) => setGapInput(e.target.value)}
+            placeholder="Your short answer…"
+            rows={3}
+            className="mt-2 w-full rounded border border-slate-300 bg-white p-1.5 text-xs text-slate-800 placeholder:text-slate-400"
+            disabled={gapLoading}
+          />
+          {gapError ? <p className="mt-1 text-xs text-red-600">{gapError}</p> : null}
+          <button
+            type="button"
+            onClick={onSubmitGap}
+            disabled={gapLoading || !gapInput.trim()}
+            className="mt-2 rounded bg-sky-700 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+          >
+            {gapLoading ? 'Saving…' : 'Submit & draft'}
+          </button>
+          <p className="mt-1 text-[10px] text-slate-400">
+            Your answer is saved to your memory bank and used immediately.
+          </p>
+          <p className="mt-1 text-[10px] text-slate-400">
+            q:{state.questionMatch?.toFixed(2)} r:{state.roleMatch?.toFixed(2)}
+          </p>
+        </div>
+      ) : null}
       {state.outcome === 'draft' ? (
         <div className="rounded border border-emerald-200 bg-emerald-50 p-2">
           <p className="text-xs font-medium text-emerald-800">Draft — grounded in your history</p>
+          {state.gapQuestion ? (
+            <p className="mt-1 text-[10px] italic text-emerald-700">Used your follow-up answer to tailor this draft.</p>
+          ) : null}
           <p className="mt-1 whitespace-pre-wrap text-xs text-slate-800">{state.answer}</p>
           <button
             type="button"
