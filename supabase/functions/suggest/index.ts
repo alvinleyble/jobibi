@@ -9,6 +9,8 @@ import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.t
 import { decideGate } from '../../../packages/shared/src/gate/gate.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
+import { findSeenBefore } from '../../../packages/shared/src/capture/capture.ts';
+import type { QaPairRow } from '../../../packages/shared/src/capture/capture.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -185,43 +187,19 @@ Deno.serve(async (req) => {
         .select('id, question_label, question_norm, answer_text, origin, application_id, embedding')
         .eq('user_id', user.id)
         .limit(100);
-      const candidates = (qaRows as unknown as {
-        id: string; question_label: string; question_norm: string; answer_text: string; origin: string; application_id: string | null; embedding: unknown;
-      }[] | null) ?? [];
+      const candidates = (qaRows as unknown as QaPairRow[] | null) ?? [];
       if (candidates.length) {
-        // Score each candidate via keywordOverlap; hybrid if embeddings available
+        // Score each candidate via the shared D12 near-duplicate scorer (hybrid cosine+keyword).
         let qEmbForSeen: number[] | null = null;
         try {
           qEmbForSeen = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true });
         } catch { qEmbForSeen = null; }
-        const parseEmbQuick = (e: unknown): number[] | null => {
-          if (!e) return null;
-          if (Array.isArray(e)) return e as number[];
-          if (typeof e === 'string') {
-            try { const p = JSON.parse(e); if (Array.isArray(p)) return p as number[]; } catch { /* */ }
-            const nums = (e as string).replace(/^\[|\]$/g, '').split(',').map((s) => Number(s.trim())).filter(Number.isFinite);
-            if (nums.length) return nums;
-          }
-          return null;
-        };
-        let best: typeof candidates[0] | null = null;
-        let bestScore = -1;
-        for (const c of candidates) {
-          const kw = keywordOverlap(parsed.data.question, c.question_label);
-          let cos = kw;
-          if (qEmbForSeen) {
-            const emb = parseEmbQuick(c.embedding);
-            if (emb) { const v = cosine(qEmbForSeen, emb); if (Number.isFinite(v)) cos = v; }
-          }
-          const hybrid = hybridScore(cos, kw);
-          if (hybrid > bestScore) { bestScore = hybrid; best = c; }
-          // also check keyword alone high even if cosine low
-          if (kw >= 0.95 && kw > bestScore) { bestScore = kw; best = c; }
-        }
-        const NEAR_DUP_THRESHOLD = 0.85;
-        const KEYWORD_NEAR_DUP = 0.8;
-        const isNearDup = best && (bestScore >= NEAR_DUP_THRESHOLD || keywordOverlap(parsed.data.question, best.question_label) >= KEYWORD_NEAR_DUP);
-        if (isNearDup && best) {
+        const seenMatch = findSeenBefore(parsed.data.question, candidates, {
+          questionEmbedding: qEmbForSeen,
+        });
+        const best = seenMatch?.best ?? null;
+        const bestScore = seenMatch?.score ?? -1;
+        if (best) {
           // fetch prior application for role-match and source label
           let priorCompany: string | null = null;
           let priorRole: string | null = null;
@@ -259,7 +237,7 @@ Deno.serve(async (req) => {
           seenBefore = {
             answerText: best.answer_text,
             questionLabel: best.question_label,
-            origin: best.origin,
+            origin: best.origin ?? 'user_written',
             sourceLabel,
             similarity: bestScore,
             defaultIsPrior,

@@ -124,8 +124,9 @@ Deno.serve(async (req) => {
     let droppedMismatched = 0;
 
     for (const ans of answers) {
-      // D16: if client says mapping not verified, drop this write
-      if (ans.mappingVerified === false) {
+      // D16: fail closed — only a write explicitly marked verified survives.
+      // A missing flag is treated the same as an explicit false.
+      if (ans.mappingVerified !== true) {
         droppedMismatched++;
         // also log this specific drop if not already in mismatches
         const { error: logErr } = await supabase.from('capture_mismatches').insert({
@@ -134,7 +135,9 @@ Deno.serve(async (req) => {
           question_label: ans.questionLabel,
           original_mapping: ans.fieldSelector ? { selector: ans.fieldSelector, id: ans.fieldId } : null,
           rederived_mapping: null,
-          reason: ans.mismatchReason ?? 'mapping mismatch (client-verified false)',
+          reason: ans.mismatchReason ?? (ans.mappingVerified === false
+            ? 'mapping mismatch (client-verified false)'
+            : 'mapping verification missing (fail-closed)'),
         });
         if (logErr) console.warn('[capture] mismatch log failed', logErr);
         continue;

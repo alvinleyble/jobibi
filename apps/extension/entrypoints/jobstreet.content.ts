@@ -19,6 +19,9 @@ export default defineContentScript({
     let lastResult: ExtractionResult | null = null;
     let debounceTimer: number | null = null;
     const pendingDraftMap = new Map<string, string>();
+    // D16: mapping snapshot taken at the moment a draft is offered for a question —
+    // this, not a later re-scan, is "the mapping used at suggestion time".
+    const suggestionMappingById = new Map<string, ExtractedQuestion>();
 
     function scanAndBroadcast() {
       const result = extractJobStreetQuestions(document);
@@ -94,14 +97,6 @@ export default defineContentScript({
     }
 
     function performCapture(trigger: string) {
-      if (!lastResult || lastResult.questions.length === 0) {
-        // Still try fresh scan for D12 (capture all identified fields even if no prior broadcast)
-        const freshFallback = extractJobStreetQuestions(document);
-        if (!freshFallback.questions.length) return;
-        // Capture fresh-only
-        lastResult = freshFallback;
-      }
-      const originalQuestions: ExtractedQuestion[] = lastResult?.questions ?? [];
       const freshResult = extractJobStreetQuestions(document);
       const freshById = new Map<string, ExtractedQuestion>(freshResult.questions.map((q) => [q.id, q]));
 
@@ -117,9 +112,9 @@ export default defineContentScript({
       const mismatches: Array<{ questionLabel: string; reason: string }> = [];
       const seenFreshIds = new Set<string>();
 
-      // D16: verify each original mapping against re-derived mapping
-      for (const origQ of originalQuestions) {
-        const freshQ = freshById.get(origQ.id);
+      // D16: verify each mapping snapshotted at suggestion time against the re-derived mapping
+      for (const [qId, origQ] of suggestionMappingById) {
+        const freshQ = freshById.get(qId);
         const verify = verifySingleMapping(origQ, freshQ);
         if (!verify.ok) {
           mismatches.push({ questionLabel: origQ.label, reason: verify.reason ?? 'mapping mismatch' });
@@ -131,7 +126,7 @@ export default defineContentScript({
         if (!el) continue;
         const val = readFieldValue(el).trim();
         if (!val) continue;
-        const draft = pendingDraftMap.get(origQ.id) ?? null;
+        const draft = pendingDraftMap.get(qId) ?? null;
         answers.push({
           questionLabel: origQ.label,
           answerText: val,
@@ -140,7 +135,7 @@ export default defineContentScript({
           fieldId: origQ.field.id ?? '',
           mappingVerified: true,
         });
-        seenFreshIds.add(origQ.id);
+        seenFreshIds.add(qId);
       }
 
       // D12: capture every identified question field, including ones Jobibi did not help with
@@ -198,10 +193,36 @@ export default defineContentScript({
       }
     }
 
-    // Listen for submit / navigation triggers
+    // Listen for submit / navigation triggers.
+    // Single-flight: a shared scheduling timer means a click on a
+    // <button type="submit"> (which fires both `click` and `submit` for the
+    // same user action) collapses to one performCapture call, not two. A
+    // cooldown after any capture suppresses the beforeunload/visibility
+    // fallbacks from re-capturing values that were already captured moments
+    // earlier by the same submission.
+    let captureTimer: number | null = null;
+    let lastCaptureAt = 0;
+    const CAPTURE_COOLDOWN_MS = 4000;
+
+    const scheduleCapture = (trigger: string, delay: number) => {
+      if (captureTimer !== null) window.clearTimeout(captureTimer);
+      captureTimer = window.setTimeout(() => {
+        captureTimer = null;
+        lastCaptureAt = Date.now();
+        performCapture(trigger);
+      }, delay);
+    };
+
+    const captureIfNotCoolingDown = (trigger: string) => {
+      if (captureTimer !== null) return; // a submit/click capture is already pending
+      if (Date.now() - lastCaptureAt < CAPTURE_COOLDOWN_MS) return;
+      lastCaptureAt = Date.now();
+      performCapture(trigger);
+    };
+
     const onSubmitCapture = () => {
       // small delay to let DOM settle (e.g., React controlled value flush)
-      window.setTimeout(() => performCapture('submit'), 150);
+      scheduleCapture('submit', 150);
     };
     document.addEventListener('submit', onSubmitCapture, true);
 
@@ -212,16 +233,16 @@ export default defineContentScript({
         'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i]',
       );
       if (submitEl) {
-        window.setTimeout(() => performCapture('click-submit'), 300);
+        scheduleCapture('click-submit', 300);
       }
     };
     document.addEventListener('click', onClickCapture, true);
 
-    const onBeforeUnload = () => performCapture('beforeunload');
+    const onBeforeUnload = () => captureIfNotCoolingDown('beforeunload');
     window.addEventListener('beforeunload', onBeforeUnload);
 
     const onVisibilityHidden = () => {
-      if (document.visibilityState === 'hidden') performCapture('visibility-hidden');
+      if (document.visibilityState === 'hidden') captureIfNotCoolingDown('visibility-hidden');
     };
     document.addEventListener('visibilitychange', onVisibilityHidden);
 
@@ -250,14 +271,29 @@ export default defineContentScript({
         }
         if (t === 'JOBIBI_DRAFT_UPDATE') {
           const payload = (message as { payload?: { id?: string; draftText?: string | null; drafts?: Record<string, string | null> } }).payload;
+          const snapshotSuggestionMapping = (id: string) => {
+            if (!lastResult) lastResult = extractJobStreetQuestions(document);
+            const q = lastResult.questions.find((qq) => qq.id === id);
+            if (q) suggestionMappingById.set(id, q);
+          };
           if (payload?.drafts) {
             for (const [id, txt] of Object.entries(payload.drafts)) {
-              if (txt) pendingDraftMap.set(id, txt);
-              else pendingDraftMap.delete(id);
+              if (txt) {
+                pendingDraftMap.set(id, txt);
+                snapshotSuggestionMapping(id);
+              } else {
+                pendingDraftMap.delete(id);
+                suggestionMappingById.delete(id);
+              }
             }
           } else if (payload?.id) {
-            if (payload.draftText) pendingDraftMap.set(payload.id, payload.draftText);
-            else pendingDraftMap.delete(payload.id);
+            if (payload.draftText) {
+              pendingDraftMap.set(payload.id, payload.draftText);
+              snapshotSuggestionMapping(payload.id);
+            } else {
+              pendingDraftMap.delete(payload.id);
+              suggestionMappingById.delete(payload.id);
+            }
           }
           sendResponse({ ok: true });
           return true;
@@ -275,6 +311,7 @@ export default defineContentScript({
     ctx.onInvalidated(() => {
       window.clearTimeout(initTimer);
       if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      if (captureTimer !== null) window.clearTimeout(captureTimer);
       observer.disconnect();
       browser.runtime.onMessage.removeListener(onMessage as Parameters<typeof browser.runtime.onMessage.removeListener>[0]);
       document.removeEventListener('submit', onSubmitCapture, true);
