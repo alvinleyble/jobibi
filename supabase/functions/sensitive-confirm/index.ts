@@ -46,10 +46,11 @@ Deno.serve(async (req) => {
 
     if (action === 'confirm') {
       // Find fact to confirm: by factId if given, else latest of kind
-      let fact: { id: string; kind: string; value: string; stated_at: string } | null = null;
+      type SensitiveFactRow = { id: string; kind: string; value: string; stated_at: string };
+      let fact: SensitiveFactRow | null = null;
       if (factId) {
         const { data } = await supabase.from('sensitive_facts').select('id, kind, value, stated_at').eq('id', factId).eq('user_id', user.id).eq('kind', kind).maybeSingle();
-        fact = data as unknown as typeof fact | null;
+        fact = data as unknown as SensitiveFactRow | null;
       } else {
         const { data } = await supabase
           .from('sensitive_facts')
@@ -59,7 +60,7 @@ Deno.serve(async (req) => {
           .order('stated_at', { ascending: false })
           .limit(1)
           .maybeSingle();
-        fact = data as unknown as typeof fact | null;
+        fact = data as unknown as SensitiveFactRow | null;
       }
       if (!fact) return jsonResponse({ error: `No fact found for kind ${kind}` }, 404);
 
