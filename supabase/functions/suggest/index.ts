@@ -102,15 +102,28 @@ Deno.serve(async (req) => {
     let rEmbedding: number[] | null = null;
     try { rEmbedding = await new Supabase.ai.Session('gte-small').run(jobText); } catch {}
 
+    const sanitize = (n: number) => (Number.isFinite(n) ? n : 0);
+    const parseEmbedding = (e: unknown): number[] | null => {
+      if (!e) return null;
+      if (Array.isArray(e)) return e as number[];
+      if (typeof e === 'string') {
+        try { const p = JSON.parse(e); if (Array.isArray(p)) return p as number[]; } catch {}
+        // pgvector may return as string "[0.1,0.2]" without JSON array parse fallback
+        const nums = e.replace(/^\[|\]$/g, '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+        if (nums.length) return nums;
+      }
+      return null;
+    };
     const questionScores: number[] = [];
     const roleScores: number[] = [];
     for (const row of memoryRows) {
+      const emb = parseEmbedding((row as unknown as { embedding: unknown }).embedding);
       const kwQ = keywordOverlap(parsed.data.question, row.text);
       const kwR = keywordOverlap(jobText, row.text);
-      const cosQ = qEmbedding && row.embedding ? cosine(qEmbedding, row.embedding) : kwQ;
-      const cosR = rEmbedding && row.embedding ? cosine(rEmbedding, row.embedding) : kwR;
-      questionScores.push(hybridScore(cosQ, kwQ));
-      roleScores.push(hybridScore(cosR, kwR));
+      const cosQ = qEmbedding && emb ? sanitize(cosine(qEmbedding, emb)) : kwQ;
+      const cosR = rEmbedding && emb ? sanitize(cosine(rEmbedding, emb)) : kwR;
+      questionScores.push(sanitize(hybridScore(sanitize(cosQ), sanitize(kwQ))));
+      roleScores.push(sanitize(hybridScore(sanitize(cosR), sanitize(kwR))));
     }
     questionScores.sort((a, b) => b - a);
     roleScores.sort((a, b) => b - a);
@@ -120,12 +133,14 @@ Deno.serve(async (req) => {
     // Map ask → refuse for S5a (ask ships in S5b)
     const outcome: 'draft' | 'refuse' = gate.outcome === 'draft' ? 'draft' : 'refuse';
 
-    // Log every decision (D15) before drafting
+    // Log every decision (D15) before drafting — sanitize NaN
+    const safeQ = Number.isFinite(gate.questionMatch) ? gate.questionMatch : 0;
+    const safeR = Number.isFinite(gate.roleMatch) ? gate.roleMatch : 0;
     await supabase.from('gate_decisions').insert({
       user_id: user.id,
       question_norm: questionNorm,
-      question_match: gate.questionMatch,
-      role_match: gate.roleMatch,
+      question_match: safeQ,
+      role_match: safeR,
       outcome,
       user_action: null,
     });
@@ -135,8 +150,8 @@ Deno.serve(async (req) => {
         SuggestResponseSchema.parse({
           outcome: 'refuse',
           questionNorm,
-          questionMatch: gate.questionMatch,
-          roleMatch: gate.roleMatch,
+          questionMatch: safeQ,
+          roleMatch: safeR,
           refuseMessage: refuseMessageFor(),
         }),
         200,
@@ -216,8 +231,8 @@ Deno.serve(async (req) => {
       SuggestResponseSchema.parse({
         outcome: 'draft',
         questionNorm,
-        questionMatch: gate.questionMatch,
-        roleMatch: gate.roleMatch,
+        questionMatch: safeQ,
+        roleMatch: safeR,
         answer,
         skeleton,
         sources,
