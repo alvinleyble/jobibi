@@ -275,9 +275,6 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
                 <span className="font-semibold">{state.sensitiveFact.value}</span>
               </p>
               <p className="mt-1 text-xs italic text-slate-600">{state.sensitiveFact.provenanceLine}</p>
-              <p className="mt-1 text-[10px] text-slate-400">
-                kind: {state.sensitiveKind} via: {state.sensitiveVia}
-              </p>
               <div className="mt-2 flex gap-2">
                 <button
                   type="button"

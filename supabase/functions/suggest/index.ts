@@ -198,8 +198,21 @@ Deno.serve(async (req) => {
           200,
         );
       }
-    } catch {
-      // Sensitive check failures should not block non-sensitive flow; fall through to gate
+    } catch (e) {
+      // Fail-closed per D17 + captain decision: on DB/check error, do not draft
+      console.error('[suggest] sensitive check failed (fail-closed)', e);
+      return jsonResponse(
+        SuggestResponseSchema.parse({
+          outcome: 'confirm',
+          questionNorm,
+          questionMatch: 0,
+          roleMatch: 0,
+          sensitiveKind: undefined,
+          sensitiveFact: null,
+          sensitiveVia: null,
+        }),
+        200,
+      );
     }
 
     type MemRow = { id: string | null; text: string; embedding: number[] | null };
