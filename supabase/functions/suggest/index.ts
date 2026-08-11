@@ -156,12 +156,13 @@ Deno.serve(async (req) => {
     // Union: rule OR retrieval against typed sensitive_facts.
     // Sensitive questions never reach Luna or Auto-Fill.
     try {
-      const { data: factRows } = await supabase
+      const { data: factRows, error: factErr } = await supabase
         .from('sensitive_facts')
         .select('id, kind, value, stated_at, confirmed_at, source_application_id')
         .eq('user_id', user.id)
         .order('stated_at', { ascending: false })
         .limit(50);
+      if (factErr) throw factErr;
       const facts = (factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? [];
       const typedFacts = facts.map((r) => ({
         id: r.id,

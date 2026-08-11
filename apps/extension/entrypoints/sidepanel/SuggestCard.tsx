@@ -178,7 +178,10 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
       setConfirmError('Please enter a value.');
       return;
     }
-    if (!state.sensitiveKind) return;
+    if (!state.sensitiveKind) {
+      setConfirmError('Could not verify this field — please try Suggest again.');
+      return;
+    }
     setConfirmLoading(true);
     setConfirmError(null);
     setConfirmDone(null);
@@ -316,6 +319,13 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
               {confirmError ? <p className="mt-1 text-xs text-red-600">{confirmError}</p> : null}
               {confirmDone ? <p className="mt-1 text-xs text-emerald-600">{confirmDone}</p> : null}
               <p className="mt-2 text-[10px] text-slate-400">This field is never drafted or auto-filled.</p>
+            </>
+          ) : !state.sensitiveKind ? (
+            <>
+              <p className="mt-1 text-xs text-slate-700">
+                This looks like a sensitive question, but we couldn&apos;t verify it just now.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">Please try Suggest again.</p>
             </>
           ) : (
             <>
