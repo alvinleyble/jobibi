@@ -164,16 +164,29 @@ Deno.serve(async (req) => {
     }
 
     let qEmbedding: number[] | null = null;
-    try { qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true }); } catch {}
+    try {
+      qEmbedding = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true });
+    } catch {
+      // qEmbedding stays null; scoring below falls back to keyword overlap
+    }
     let rEmbedding: number[] | null = null;
-    try { rEmbedding = await new Supabase.ai.Session('gte-small').run(jobText, { mean_pool: true, normalize: true }); } catch {}
+    try {
+      rEmbedding = await new Supabase.ai.Session('gte-small').run(jobText, { mean_pool: true, normalize: true });
+    } catch {
+      // rEmbedding stays null; scoring below falls back to keyword overlap
+    }
 
     const sanitize = (n: number) => (Number.isFinite(n) ? n : 0);
     const parseEmbedding = (e: unknown): number[] | null => {
       if (!e) return null;
       if (Array.isArray(e)) return e as number[];
       if (typeof e === 'string') {
-        try { const p = JSON.parse(e); if (Array.isArray(p)) return p as number[]; } catch {}
+        try {
+          const p = JSON.parse(e);
+          if (Array.isArray(p)) return p as number[];
+        } catch {
+          // fall through to manual comma-split parse below
+        }
         const nums = e.replace(/^\[|\]$/g, '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
         if (nums.length) return nums;
       }
