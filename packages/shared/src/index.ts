@@ -8,8 +8,10 @@ export const APP_NAME = 'Jobibi';
 export const DOCUMENT_KINDS = ['resume', 'cover_letter', 'transcript'] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
-export const SENSITIVE_FACT_KINDS = ['salary', 'notice_period', 'work_authorization', 'location'] as const;
-export type SensitiveFactKind = (typeof SENSITIVE_FACT_KINDS)[number];
+// Kept in its own leaf module (not defined here) so Deno Edge Functions can
+// import the type without pulling in this barrel's DOM-typed adapter exports.
+export { SENSITIVE_FACT_KINDS } from './sensitiveFactKind.ts';
+export type { SensitiveFactKind } from './sensitiveFactKind.ts';
 
 // Adapter types are lightweight and safe for the extension bundle (no ingestion deps).
 export type {

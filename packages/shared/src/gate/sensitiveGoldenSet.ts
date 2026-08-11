@@ -12,7 +12,7 @@
  */
 
 import type { SensitiveFact } from './sensitive.ts';
-import type { SensitiveFactKind } from '../index.ts';
+import type { SensitiveFactKind } from '../sensitiveFactKind.ts';
 
 export interface SensitiveGoldenCase {
   id: string;

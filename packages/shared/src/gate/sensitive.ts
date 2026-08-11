@@ -9,7 +9,7 @@
  * Excluded from drafting and Auto-Fill at the pipeline level.
  */
 
-import type { SensitiveFactKind } from '../index.ts';
+import type { SensitiveFactKind } from '../sensitiveFactKind.ts';
 
 export interface SensitiveFact {
   id: string;
