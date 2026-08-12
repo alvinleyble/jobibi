@@ -14,7 +14,7 @@ describe('gate', () => {
   });
 
   it('q-high + r-high → draft', () => {
-    const r = decideGate({ questionScores: [0.65, 0.2, 0.15], roleScores: [0.6, 0.2] });
+    const r = decideGate({ questionScores: [0.65, 0.2, 0.15], roleScores: [0.68, 0.2] });
     expect(r.outcome).toBe('draft');
   });
 
@@ -37,7 +37,7 @@ describe('gate', () => {
         if (c.tags?.includes('absolute-floor')) qScores = [];
       } else if (c.expectedOutcome === 'draft') {
         qScores = [0.62, 0.2, 0.15];
-        rScores = [0.55, 0.2];
+        rScores = [0.68, 0.2];
       } else {
         qScores = [0.62, 0.2, 0.15];
         rScores = [0.18, 0.12];

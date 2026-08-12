@@ -25,13 +25,21 @@ export interface GateResult {
   reason: string;
 }
 
-// Tuning constants — calibrated against the 50-case golden set.
+// Tuning constants — calibrated against 50-case golden set + live headed verification.
 // Relative: top must stand X above mean; floor: genuinely-nothing.
-// Live gte-small + keyword hybrid scores cluster tighter than synthetic,
-// so gap is smaller live (your NTT page: q ~0.60, r ~0.72, 7 chunks).
+// Live gte-small + keyword hybrid scores cluster tighter than synthetic
+// (NTT page 7 chunks: q ~0.60, r ~0.72) and headed verification found
+// live roleMatch never dropped below 0.51 across 72 question×role combos,
+// so ROLE_THRESHOLD=0.35 never reached the ask branch. Recalibrated to
+// 0.60 — sits above the observed live floor (0.51) and below matched-role
+// hybrids (~0.65–0.80), restoring the ask rate while keeping the bias
+// toward ask (D15). Revisit after JobStreet-only gate_decisions telemetry
+// accumulates; hybridScore weights (0.7/0.3 in retrieve.ts) remain unchanged
+// but are the next knob if cosine baseline shifts with corpus growth or
+// embedding model upgrade (D5c).
 const ABSOLUTE_FLOOR = 0.25; // below this → refuse regardless of relative gap
 const RELATIVE_GAP = 0.04; // top - mean must exceed this for signal (was 0.12, too strict for 7-chunk tight hybrid)
-const ROLE_THRESHOLD = 0.35; // r-high boundary (tuned low to bias ask)
+export const ROLE_THRESHOLD = 0.60; // r-high boundary — live-recalibrated from 0.35 (see above)
 
 function top(scores: number[]): number {
   return scores.length ? scores[0] : 0;

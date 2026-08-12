@@ -225,7 +225,7 @@ Deno.serve(async (req) => {
               } catch { /* fallback to keyword */ }
             }
             const roleHybrid = hybridScore(roleCos, roleKw);
-            const ROLE_THRESHOLD_LOCAL = 0.35;
+            const ROLE_THRESHOLD_LOCAL = 0.60; // keep in sync with packages/shared/src/gate/gate.ts
             defaultIsPrior = roleHybrid >= ROLE_THRESHOLD_LOCAL;
           } else {
             // No prior role info, default to showing prior as primary (conservative)
