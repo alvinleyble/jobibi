@@ -383,6 +383,9 @@ import_map = "../deno.json"
 [functions.sensitive-confirm]
 import_map = "../deno.json"
 
+[functions.capture]
+import_map = "../deno.json"
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

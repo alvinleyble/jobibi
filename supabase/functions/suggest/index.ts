@@ -9,6 +9,8 @@ import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.t
 import { decideGate } from '../../../packages/shared/src/gate/gate.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
+import { findSeenBefore } from '../../../packages/shared/src/capture/capture.ts';
+import type { QaPairRow } from '../../../packages/shared/src/capture/capture.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -57,6 +59,20 @@ const SuggestResponseSchema = z.object({
     .nullable()
     .optional(),
   sensitiveVia: z.enum(['rule', 'retrieval', 'both']).nullable().optional(),
+  // seen-before (S6 D12) — prior answer for near-duplicate question
+  seenBefore: z
+    .object({
+      answerText: z.string(),
+      questionLabel: z.string(),
+      origin: z.string(),
+      sourceLabel: z.string(),
+      similarity: z.number(),
+      defaultIsPrior: z.boolean(),
+      priorCompany: z.string().nullable().optional(),
+      priorRole: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 function jsonResponse(body: unknown, status: number) {
@@ -151,6 +167,89 @@ Deno.serve(async (req) => {
 
     const questionNorm = normalizeQuestion(parsed.data.question);
     const jobText = `${parsed.data.jobContext.role} ${parsed.data.jobContext.company}`;
+
+    // ── S6 seen-before check (D12) — surface prior answer for near-duplicate ──
+    // Runs before retrieval/gate so we can attach prior even when gate would refuse.
+    // Best-effort; failures do not block drafting.
+    let seenBefore: {
+      answerText: string;
+      questionLabel: string;
+      origin: string;
+      sourceLabel: string;
+      similarity: number;
+      defaultIsPrior: boolean;
+      priorCompany: string | null;
+      priorRole: string | null;
+    } | null = null;
+    try {
+      const { data: qaRows } = await supabase
+        .from('qa_pairs')
+        .select('id, question_label, question_norm, answer_text, origin, application_id, embedding')
+        .eq('user_id', user.id)
+        .limit(100);
+      const candidates = (qaRows as unknown as QaPairRow[] | null) ?? [];
+      if (candidates.length) {
+        // Score each candidate via the shared D12 near-duplicate scorer (hybrid cosine+keyword).
+        let qEmbForSeen: number[] | null = null;
+        try {
+          qEmbForSeen = await new Supabase.ai.Session('gte-small').run(parsed.data.question, { mean_pool: true, normalize: true });
+        } catch { qEmbForSeen = null; }
+        const seenMatch = findSeenBefore(parsed.data.question, candidates, {
+          questionEmbedding: qEmbForSeen,
+        });
+        const best = seenMatch?.best ?? null;
+        const bestScore = seenMatch?.score ?? -1;
+        if (best) {
+          // fetch prior application for role-match and source label
+          let priorCompany: string | null = null;
+          let priorRole: string | null = null;
+          if (best.application_id) {
+            const { data: app } = await supabase.from('applications').select('company, role_title').eq('id', best.application_id).eq('user_id', user.id).maybeSingle();
+            const row = app as unknown as { company: string | null; role_title: string | null } | null;
+            priorCompany = row?.company ?? null;
+            priorRole = row?.role_title ?? null;
+          }
+          // role-match to decide default: compare current jobText vs prior role/company
+          const currentJobText2 = `${parsed.data.jobContext.role} ${parsed.data.jobContext.company}`;
+          const priorJobText = priorRole || priorCompany ? `${priorRole ?? ''} ${priorCompany ?? ''}`.trim() : '';
+          let defaultIsPrior = false;
+          if (priorJobText) {
+            const roleKw = keywordOverlap(currentJobText2, priorJobText);
+            let roleCos = roleKw;
+            if (qEmbForSeen) {
+              try {
+                const priorEmb = await new Supabase.ai.Session('gte-small').run(priorJobText, { mean_pool: true, normalize: true });
+                const curEmb = await new Supabase.ai.Session('gte-small').run(currentJobText2, { mean_pool: true, normalize: true });
+                const v = cosine(curEmb, priorEmb);
+                if (Number.isFinite(v)) roleCos = v;
+              } catch { /* fallback to keyword */ }
+            }
+            const roleHybrid = hybridScore(roleCos, roleKw);
+            const ROLE_THRESHOLD_LOCAL = 0.35;
+            defaultIsPrior = roleHybrid >= ROLE_THRESHOLD_LOCAL;
+          } else {
+            // No prior role info, default to showing prior as primary (conservative)
+            defaultIsPrior = true;
+          }
+          const sourceLabel = priorCompany && priorRole
+            ? `Your ${priorCompany} — ${priorRole} application`
+            : priorCompany ? `Your ${priorCompany} application` : priorRole ? `Your ${priorRole} application` : 'Your prior answer';
+          seenBefore = {
+            answerText: best.answer_text,
+            questionLabel: best.question_label,
+            origin: best.origin ?? 'user_written',
+            sourceLabel,
+            similarity: bestScore,
+            defaultIsPrior,
+            priorCompany,
+            priorRole,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[suggest] seen-before lookup failed', e);
+      seenBefore = null;
+    }
 
     // ── S5c sensitive check (D17) — must run before retrieval/gate/drafting ──
     // Union: rule OR retrieval against typed sensitive_facts.
@@ -311,6 +410,7 @@ Deno.serve(async (req) => {
           questionMatch: safeQ,
           roleMatch: safeR,
           refuseMessage: refuseMessageFor(),
+          seenBefore: seenBefore ?? null,
         }),
         200,
       );
@@ -339,6 +439,7 @@ Deno.serve(async (req) => {
           gapQuestion,
           anchoredChunkId,
           anchoredChunkText: anchorText.slice(0, 400),
+          seenBefore: seenBefore ?? null,
         }),
         200,
       );
@@ -420,6 +521,7 @@ Deno.serve(async (req) => {
         answer,
         skeleton,
         sources,
+        seenBefore: seenBefore ?? null,
       }),
       200,
     );

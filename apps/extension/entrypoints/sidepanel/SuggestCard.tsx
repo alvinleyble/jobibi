@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import type { ExtractedQuestion, ExtractionResult } from '@jobibi/shared';
 
@@ -16,6 +16,16 @@ interface SuggestState {
   sensitiveKind?: string;
   sensitiveFact?: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null;
   sensitiveVia?: 'rule' | 'retrieval' | 'both' | null;
+  seenBefore?: {
+    answerText: string;
+    questionLabel: string;
+    origin: string;
+    sourceLabel: string;
+    similarity: number;
+    defaultIsPrior: boolean;
+    priorCompany?: string | null;
+    priorRole?: string | null;
+  } | null;
   error?: string;
   loading?: boolean;
 }
@@ -37,11 +47,29 @@ async function extractSuggestError(err: unknown): Promise<string> {
   return getErrorMessage(err);
 }
 
-export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContext: ExtractionResult['jobContext'] }) {
+export function SuggestCard({
+  q,
+  jobContext,
+  onDraftAvailable,
+}: {
+  q: ExtractedQuestion;
+  jobContext: ExtractionResult['jobContext'];
+  onDraftAvailable?: (questionId: string, draftText: string | null) => void;
+}) {
   const [state, setState] = useState<SuggestState>({});
   const [gapInput, setGapInput] = useState('');
   const [gapLoading, setGapLoading] = useState(false);
   const [gapError, setGapError] = useState<string | null>(null);
+
+  // Notify parent (JobStreetQuestions) when a draft is available for capture mapping (D13)
+  useEffect(() => {
+    if (state.outcome === 'draft' && state.answer && onDraftAvailable) {
+      onDraftAvailable(q.id, state.answer);
+    } else if ((state.outcome === 'refuse' || state.outcome === 'ask' || !state.outcome) && onDraftAvailable) {
+      // clear draft when not in draft outcome
+      // keep prior draft? For capture, only current draft matters
+    }
+  }, [state.outcome, state.answer, q.id, onDraftAvailable]);
 
   const onSuggest = async () => {
     setState({ loading: true });
@@ -79,7 +107,14 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
         sensitiveKind: data.sensitiveKind,
         sensitiveFact: data.sensitiveFact ?? null,
         sensitiveVia: data.sensitiveVia ?? null,
+        seenBefore: data.seenBefore ?? null,
       });
+      // propagate draft to content script for capture origin diff (D13)
+      if (data.outcome === 'draft' && data.answer && onDraftAvailable) {
+        onDraftAvailable(q.id, data.answer as string);
+      } else if (onDraftAvailable) {
+        onDraftAvailable(q.id, null);
+      }
     } catch (e) {
       setState({ error: getErrorMessage(e) });
     }
@@ -126,6 +161,7 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
         roleMatch: prev.roleMatch,
         error: undefined,
       }));
+      if (onDraftAvailable && data.answer) onDraftAvailable(q.id, data.answer as string);
       setGapInput('');
     } catch (e) {
       setGapError(getErrorMessage(e));
@@ -215,6 +251,8 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
     await navigator.clipboard.writeText(text);
   };
 
+  const seen = state.seenBefore;
+
   return (
     <div className="mt-1 flex flex-col gap-1">
       <button
@@ -226,6 +264,33 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
         {state.loading ? 'Thinking…' : state.outcome ? 'Regenerate' : 'Suggest'}
       </button>
       {state.error ? <p className="text-xs text-red-600">{state.error}</p> : null}
+
+      {/* Seen-before surfacing (S6 D12) — shown for any outcome, both options always offered */}
+      {seen ? (
+        <div className={`rounded border p-2 ${seen.defaultIsPrior ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-slate-50'}`}>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-blue-800">Seen before — {seen.sourceLabel}</p>
+            <span className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-600 border">origin: {seen.origin} · sim {seen.similarity.toFixed(2)}</span>
+          </div>
+          <p className="mt-1 text-[10px] italic text-slate-500">Prior: “{seen.questionLabel}”</p>
+          <p className="mt-1 whitespace-pre-wrap text-xs text-slate-800">{seen.answerText}</p>
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={() => copy(seen.answerText)} className="rounded border border-blue-300 bg-white px-2 py-1 text-xs">
+              Copy prior answer
+            </button>
+            <span className="self-center text-[10px] text-slate-500">
+              {seen.defaultIsPrior ? 'Prior is default (same role family)' : 'Fresh draft is default (different role) — prior offered as alternative'}
+            </span>
+          </div>
+          {!seen.defaultIsPrior && state.outcome !== 'draft' ? (
+            <p className="mt-1 text-[10px] text-slate-500">A fresh draft is also available below; both are offered.</p>
+          ) : null}
+          {seen.defaultIsPrior && state.outcome === 'draft' ? (
+            <p className="mt-1 text-[10px] text-slate-500">Fresh draft also below — choose either.</p>
+          ) : null}
+        </div>
+      ) : null}
+
       {state.outcome === 'refuse' ? (
         <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
           <p className="font-medium">Not enough in your history to draft this.</p>
@@ -358,8 +423,11 @@ export function SuggestCard({ q, jobContext }: { q: ExtractedQuestion; jobContex
         </div>
       ) : null}
       {state.outcome === 'draft' ? (
-        <div className="rounded border border-emerald-200 bg-emerald-50 p-2">
-          <p className="text-xs font-medium text-emerald-800">Draft — grounded in your history</p>
+        <div className={`rounded border p-2 ${seen?.defaultIsPrior ? 'border-slate-200 bg-slate-50' : 'border-emerald-200 bg-emerald-50'}`}>
+          <p className={`text-xs font-medium ${seen?.defaultIsPrior ? 'text-slate-700' : 'text-emerald-800'}`}>
+            {seen?.defaultIsPrior ? 'Fresh draft — tailored for this role (prior was alternative above)' : 'Draft — grounded in your history'}
+            {seen?.defaultIsPrior ? '' : seen ? ' (default — different role from prior)' : ''}
+          </p>
           {state.gapQuestion ? (
             <p className="mt-1 text-[10px] italic text-emerald-700">Used your follow-up answer to tailor this draft.</p>
           ) : null}

@@ -107,6 +107,7 @@ Free tier: Copy. Premium: Copy + Insert (fills the field; user still reviews and
 | `sensitive_facts` | High-stakes typed facts | kind (salary/notice/visa/relocation), value, source_application_id, stated_at, confirmed_at |
 | `style_profile` | Distilled voice guide | profile_md, generated_at, corpus_size |
 | `gate_decisions` | Calibration telemetry | application_id, question_norm, question_match, role_match, outcome, user_action, created_at |
+| `capture_mismatches` | D16 re-derive-drop audit log | application_id, question_label, original_mapping, rederived_mapping, reason, created_at |
 
 `origin` on `qa_pairs` is one of `user_written`, `user_edited`, `accepted_verbatim`. It is derived by comparing `draft_text` against what the user actually submitted, and it is what keeps the voice corpus clean (see below).
 
