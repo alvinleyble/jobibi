@@ -201,23 +201,39 @@ export default defineContentScript({
     // fallbacks from re-capturing values that were already captured moments
     // earlier by the same submission.
     let captureTimer: number | null = null;
+    let pendingCaptureTrigger: string | null = null;
     let lastCaptureAt = 0;
     const CAPTURE_COOLDOWN_MS = 4000;
 
+    const runCapture = (trigger: string) => {
+      lastCaptureAt = Date.now();
+      performCapture(trigger);
+    };
+
     const scheduleCapture = (trigger: string, delay: number) => {
       if (captureTimer !== null) window.clearTimeout(captureTimer);
+      pendingCaptureTrigger = trigger;
       captureTimer = window.setTimeout(() => {
         captureTimer = null;
-        lastCaptureAt = Date.now();
-        performCapture(trigger);
+        pendingCaptureTrigger = null;
+        runCapture(trigger);
       }, delay);
     };
 
     const captureIfNotCoolingDown = (trigger: string) => {
-      if (captureTimer !== null) return; // a submit/click capture is already pending
+      if (captureTimer !== null) {
+        // A submit/click capture is already scheduled but the page may unload
+        // before its timer fires (setTimeout is not guaranteed to run during
+        // teardown) — flush it synchronously now instead of dropping it.
+        window.clearTimeout(captureTimer);
+        const flushTrigger = pendingCaptureTrigger ?? trigger;
+        captureTimer = null;
+        pendingCaptureTrigger = null;
+        runCapture(flushTrigger);
+        return;
+      }
       if (Date.now() - lastCaptureAt < CAPTURE_COOLDOWN_MS) return;
-      lastCaptureAt = Date.now();
-      performCapture(trigger);
+      runCapture(trigger);
     };
 
     const onSubmitCapture = () => {
