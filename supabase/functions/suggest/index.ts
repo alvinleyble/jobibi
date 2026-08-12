@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
-import { decideGate } from '../../../packages/shared/src/gate/gate.ts';
+import { decideGate, ROLE_THRESHOLD } from '../../../packages/shared/src/gate/gate.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
 import { findSeenBefore } from '../../../packages/shared/src/capture/capture.ts';
@@ -225,8 +225,7 @@ Deno.serve(async (req) => {
               } catch { /* fallback to keyword */ }
             }
             const roleHybrid = hybridScore(roleCos, roleKw);
-            const ROLE_THRESHOLD_LOCAL = 0.60; // keep in sync with packages/shared/src/gate/gate.ts
-            defaultIsPrior = roleHybrid >= ROLE_THRESHOLD_LOCAL;
+            defaultIsPrior = roleHybrid >= ROLE_THRESHOLD;
           } else {
             // No prior role info, default to showing prior as primary (conservative)
             defaultIsPrior = true;
