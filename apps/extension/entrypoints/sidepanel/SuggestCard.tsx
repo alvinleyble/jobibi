@@ -34,17 +34,39 @@ function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function extractSuggestError(err: unknown): Promise<string> {
-  try {
-    if (err && typeof err === 'object' && 'context' in err) {
-      const ctx = (err as { context?: { json: () => Promise<unknown> } }).context;
-      if (ctx?.json) {
-        const body = (await ctx.json()) as { error?: unknown };
-        if (body?.error) return typeof body.error === 'string' ? body.error : JSON.stringify(body.error);
+type SuggestErrorBody = {
+  error?: unknown;
+  code?: string;
+  sensitiveKind?: string;
+  sensitiveVia?: string;
+  sensitiveFact?: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null;
+};
+
+// Response bodies can only be read once — parse it a single time and derive
+// both the sensitive-rejection check and the display message from the result.
+async function readSuggestErrorBody(err: unknown): Promise<SuggestErrorBody | null> {
+  if (err && typeof err === 'object' && 'context' in err) {
+    const ctx = (err as { context?: { json: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } } }).context;
+    if (ctx?.json) {
+      try {
+        return (await ctx.json()) as SuggestErrorBody;
+      } catch {
+        try {
+          return (await ctx.clone?.()?.json()) as SuggestErrorBody;
+        } catch {}
       }
     }
-  } catch {}
+  }
+  return null;
+}
+
+function messageFromSuggestErrorBody(body: SuggestErrorBody | null, err: unknown): string {
+  if (body?.error) return typeof body.error === 'string' ? body.error : JSON.stringify(body.error);
   return getErrorMessage(err);
+}
+
+async function extractSuggestError(err: unknown): Promise<string> {
+  return messageFromSuggestErrorBody(await readSuggestErrorBody(err), err);
 }
 
 export function SuggestCard({
@@ -128,30 +150,18 @@ export function SuggestCard({
     }
   };
 
-  // helper to detect sensitive rejection from any insert path and route to confirm card
-  async function tryHandleSensitiveRejection(err: unknown): Promise<boolean> {
-    try {
-      if (err && typeof err === 'object' && 'context' in err) {
-        const ctx = (err as { context?: { json: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } } }).context;
-        let body: unknown = null;
-        if (ctx?.json) {
-          try { body = await ctx.json(); } catch {
-            try { body = await ctx.clone?.()?.json(); } catch {}
-          }
-        }
-        const b = body as { code?: string; sensitiveKind?: string; sensitiveVia?: string; sensitiveFact?: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null } | null;
-        if (b?.code === 'sensitive_rejected') {
-          setState((prev) => ({
-            ...prev,
-            outcome: 'confirm',
-            sensitiveKind: b.sensitiveKind ?? undefined,
-            sensitiveFact: b.sensitiveFact ?? null,
-            sensitiveVia: (b.sensitiveVia as 'rule' | 'retrieval' | 'both' | null) ?? null,
-          }));
-          return true;
-        }
-      }
-    } catch {}
+  // helper to detect sensitive rejection from an already-parsed error body and route to confirm card
+  function tryHandleSensitiveRejection(body: SuggestErrorBody | null): boolean {
+    if (body?.code === 'sensitive_rejected') {
+      setState((prev) => ({
+        ...prev,
+        outcome: 'confirm',
+        sensitiveKind: body.sensitiveKind ?? undefined,
+        sensitiveFact: body.sensitiveFact ?? null,
+        sensitiveVia: (body.sensitiveVia as 'rule' | 'retrieval' | 'both' | null) ?? null,
+      }));
+      return true;
+    }
     return false;
   }
 
@@ -181,11 +191,12 @@ export function SuggestCard({
         },
       });
       if (error) {
-        if (await tryHandleSensitiveRejection(error)) {
+        const body = await readSuggestErrorBody(error);
+        if (tryHandleSensitiveRejection(body)) {
           setGapLoading(false);
           return;
         }
-        const msg = await extractSuggestError(error);
+        const msg = messageFromSuggestErrorBody(body, error);
         setGapError(msg);
         setGapLoading(false);
         return;
@@ -312,11 +323,12 @@ export function SuggestCard({
         },
       });
       if (error) {
-        if (await tryHandleSensitiveRejection(error)) {
+        const body = await readSuggestErrorBody(error);
+        if (tryHandleSensitiveRejection(body)) {
           setManualLoading(false);
           return;
         }
-        const msg = await extractSuggestError(error);
+        const msg = messageFromSuggestErrorBody(body, error);
         setManualError(msg);
         setManualLoading(false);
         return;
