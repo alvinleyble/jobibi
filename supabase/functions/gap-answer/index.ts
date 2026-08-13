@@ -1,12 +1,14 @@
 // S5b: gap-answer — store answer to Jobibi's gap question, chunk into memory, draft continues (D10)
 // Called after an ask outcome. Stores row in gap_answers, embeds answer into memory_chunks (type gap_answer),
 // then drafts a copy card grounded in the new material (explicit length cap, strict JSON schema).
+// S7A: sensitive storage gate — reject-and-redirect via detectSensitiveUnion before any insert (D17).
 
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { keywordOverlap, cosine, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
+import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -68,6 +70,73 @@ Deno.serve(async (req) => {
     const questionNorm = normalizeQuestion(originalQuestion);
     const trimmedAnswer = answer.trim();
     if (!trimmedAnswer) return jsonResponse({ error: 'Answer must not be empty' }, 400);
+
+    // S7A sensitive storage gate — reject-and-redirect, never silent refile (D17)
+    // Check answer + question texts against typed sensitive_facts before any insert.
+    // On hit, return 409 with confirm payload so UI can route to sensitive-confirm.
+    try {
+      const { data: factRows } = await supabase
+        .from('sensitive_facts')
+        .select('id, kind, value, stated_at, confirmed_at, source_application_id')
+        .eq('user_id', user.id)
+        .order('stated_at', { ascending: false })
+        .limit(50);
+      const typedFacts = ((factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? []).map((r) => ({
+        id: r.id,
+        kind: r.kind as import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact['kind'],
+        value: r.value,
+        stated_at: r.stated_at,
+        confirmed_at: r.confirmed_at,
+        source_application_id: r.source_application_id,
+      }));
+      // Union over multiple texts: answer alone, original question, gap question, and combined
+      const textsToCheck = [trimmedAnswer, originalQuestion, gapQuestion].filter(Boolean) as string[];
+      const combined = `${originalQuestion} ${trimmedAnswer}`;
+      textsToCheck.push(combined);
+      let sensitive: ReturnType<typeof detectSensitiveUnion> | null = null;
+      for (const t of textsToCheck) {
+        const r = detectSensitiveUnion(t, typedFacts);
+        if (r.isSensitive) { sensitive = r; break; }
+      }
+      if (sensitive?.isSensitive) {
+        let factPayload: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null = null;
+        if (sensitive.fact) {
+          factPayload = {
+            id: sensitive.fact.id,
+            kind: sensitive.fact.kind,
+            value: sensitive.fact.value,
+            stated_at: sensitive.fact.stated_at,
+            confirmed_at: sensitive.fact.confirmed_at ?? null,
+            provenanceLine: buildProvenanceLine(sensitive.fact),
+          };
+        }
+        return jsonResponse(
+          {
+            error: 'sensitive_detected',
+            code: 'sensitive_rejected',
+            message: `This looks like a sensitive field (${sensitive.kind}) — please confirm or update it via the sensitive flow.`,
+            sensitiveKind: sensitive.kind,
+            sensitiveVia: sensitive.via,
+            sensitiveFact: factPayload,
+          },
+          409,
+        );
+      }
+    } catch (e) {
+      // Fail-closed per S7A: on check error, do not store raw text — reject with generic sensitive routing
+      console.error('[gap-answer] sensitive check failed (fail-closed)', e);
+      return jsonResponse(
+        {
+          error: 'sensitive_detected',
+          code: 'sensitive_rejected',
+          message: 'Could not verify sensitivity — please use the sensitive field flow.',
+          sensitiveKind: null,
+          sensitiveVia: null,
+          sensitiveFact: null,
+        },
+        409,
+      );
+    }
 
     let validAnchoredId: string | null = null;
     if (anchoredChunkId) {

@@ -166,9 +166,17 @@ export default function JobStreetQuestions() {
               } else if (data) {
                 const inserted = (data as { inserted?: number }).inserted ?? 0;
                 const dropped = (data as { droppedMismatched?: number }).droppedMismatched ?? 0;
-                if (inserted || dropped) {
-                  setCaptureMsg(`Capture: ${inserted} saved${dropped ? `, ${dropped} mismatched dropped` : ''}`);
-                  setTimeout(() => setCaptureMsg(null), 3000);
+                const droppedSensitive = (data as { droppedSensitive?: number }).droppedSensitive ?? 0;
+                const sensitiveRejections = (data as { sensitiveRejections?: Array<{ questionLabel: string; sensitiveKind: string | null }> }).sensitiveRejections ?? [];
+                if (inserted || dropped || droppedSensitive) {
+                  const parts = [`Capture: ${inserted} saved`];
+                  if (dropped) parts.push(`${dropped} mismatched dropped`);
+                  if (droppedSensitive) {
+                    const kinds = sensitiveRejections.map((r) => r.sensitiveKind).filter(Boolean).join(', ') || 'sensitive';
+                    parts.push(`${droppedSensitive} sensitive not saved — confirm via intake/sensitive card (${kinds})`);
+                  }
+                  setCaptureMsg(parts.join(' · '));
+                  setTimeout(() => setCaptureMsg(null), 4000);
                 }
               }
             } catch (e) {

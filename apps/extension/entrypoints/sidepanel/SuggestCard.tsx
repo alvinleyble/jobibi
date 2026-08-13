@@ -60,6 +60,11 @@ export function SuggestCard({
   const [gapInput, setGapInput] = useState('');
   const [gapLoading, setGapLoading] = useState(false);
   const [gapError, setGapError] = useState<string | null>(null);
+  // S7A manual input on refuse (cold raw-text, user-written)
+  const [manualInput, setManualInput] = useState('');
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualSuccess, setManualSuccess] = useState<string | null>(null);
 
   // Notify parent (JobStreetQuestions) when a draft is available for capture mapping (D13)
   useEffect(() => {
@@ -75,6 +80,9 @@ export function SuggestCard({
     setState({ loading: true });
     setGapError(null);
     setGapInput('');
+    setManualInput('');
+    setManualError(null);
+    setManualSuccess(null);
     setConfirmError(null);
     setConfirmDone(null);
     setShowUpdate(false);
@@ -120,6 +128,33 @@ export function SuggestCard({
     }
   };
 
+  // helper to detect sensitive rejection from any insert path and route to confirm card
+  async function tryHandleSensitiveRejection(err: unknown): Promise<boolean> {
+    try {
+      if (err && typeof err === 'object' && 'context' in err) {
+        const ctx = (err as { context?: { json: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } } }).context;
+        let body: unknown = null;
+        if (ctx?.json) {
+          try { body = await ctx.json(); } catch {
+            try { body = await ctx.clone?.()?.json(); } catch {}
+          }
+        }
+        const b = body as { code?: string; sensitiveKind?: string; sensitiveVia?: string; sensitiveFact?: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null } | null;
+        if (b?.code === 'sensitive_rejected') {
+          setState((prev) => ({
+            ...prev,
+            outcome: 'confirm',
+            sensitiveKind: b.sensitiveKind ?? undefined,
+            sensitiveFact: b.sensitiveFact ?? null,
+            sensitiveVia: (b.sensitiveVia as 'rule' | 'retrieval' | 'both' | null) ?? null,
+          }));
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
   const onSubmitGap = async () => {
     const trimmed = gapInput.trim();
     if (!trimmed) {
@@ -146,6 +181,10 @@ export function SuggestCard({
         },
       });
       if (error) {
+        if (await tryHandleSensitiveRejection(error)) {
+          setGapLoading(false);
+          return;
+        }
         const msg = await extractSuggestError(error);
         setGapError(msg);
         setGapLoading(false);
@@ -247,6 +286,52 @@ export function SuggestCard({
     }
   };
 
+  // S7A manual input on refuse — cold raw-text capture, user-written, guaranteed memory
+  const onManualSubmit = async () => {
+    const trimmed = manualInput.trim();
+    if (!trimmed) {
+      setManualError('Please write a short answer.');
+      return;
+    }
+    if (trimmed.length < 3) {
+      setManualError('Answer is too short.');
+      return;
+    }
+    setManualLoading(true);
+    setManualError(null);
+    setManualSuccess(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('manual-input', {
+        body: {
+          questionLabel: q.label,
+          answerText: trimmed,
+          jobContext: {
+            role: jobContext.roleTitle ?? 'Unknown role',
+            company: jobContext.company ?? 'Unknown company',
+          },
+        },
+      });
+      if (error) {
+        if (await tryHandleSensitiveRejection(error)) {
+          setManualLoading(false);
+          return;
+        }
+        const msg = await extractSuggestError(error);
+        setManualError(msg);
+        setManualLoading(false);
+        return;
+      }
+      setManualSuccess('Saved to your memory bank.');
+      setManualInput('');
+      // Optionally trigger seen-before refresh on next Suggest: keep question as dirty
+      void data;
+    } catch (e) {
+      setManualError(getErrorMessage(e));
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
   const copy = async (text: string) => {
     await navigator.clipboard.writeText(text);
   };
@@ -298,6 +383,29 @@ export function SuggestCard({
           <p className="mt-1 text-[10px] text-amber-700">
             q:{state.questionMatch?.toFixed(2)} r:{state.roleMatch?.toFixed(2)}
           </p>
+          {/* S7A manual input on refuse — cold raw-text, guarantees memory when capture is least trustworthy */}
+          <div className="mt-2 rounded border border-amber-200 bg-white p-2">
+            <p className="text-xs font-medium text-slate-800">Provide input</p>
+            <p className="mt-1 text-[10px] text-slate-500">Your answer will be saved to your memory bank (user-written) and used for future drafts.</p>
+            <textarea
+              value={manualInput}
+              onChange={(e) => setManualInput(e.target.value)}
+              placeholder="Your answer…"
+              rows={3}
+              className="mt-2 w-full rounded border border-slate-300 bg-white p-1.5 text-xs text-slate-800 placeholder:text-slate-400"
+              disabled={manualLoading}
+            />
+            {manualError ? <p className="mt-1 text-xs text-red-600">{manualError}</p> : null}
+            {manualSuccess ? <p className="mt-1 text-xs text-emerald-600">{manualSuccess}</p> : null}
+            <button
+              type="button"
+              onClick={onManualSubmit}
+              disabled={manualLoading || !manualInput.trim()}
+              className="mt-2 rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {manualLoading ? 'Saving…' : 'Save to memory'}
+            </button>
+          </div>
         </div>
       ) : null}
       {state.outcome === 'ask' ? (
