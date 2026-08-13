@@ -1,9 +1,9 @@
 import type { ExtractedQuestion, ExtractionResult, JobContext } from './types.ts';
 import {
   CONFIDENCE_BY_SOURCE,
-  FIELD_SELECTOR,
+  FIELD_SELECTOR as SHARED_FIELD_SELECTOR,
   fieldTypeFor,
-  isVisible,
+  isVisible as isVisibleBase,
   escapeCss,
   cleanLabel,
   fieldSelector,
@@ -11,6 +11,25 @@ import {
   resolveLabel,
   contextFor,
 } from './helpers.ts';
+
+// LinkedIn-specific field selector: more permissive than shared (captures any
+// input/select/textarea - LinkedIn sometimes uses generic <input> without type
+// or with artdeco classes). Filtering for hidden/file etc happens later.
+const FIELD_SELECTOR = 'textarea, input, select';
+
+function isVisible(el: Element): boolean {
+  // Base checks (hidden, aria-hidden, inline style) plus ancestor hidden
+  if (!isVisibleBase(el)) return false;
+  let cur: Element | null = el.parentElement;
+  while (cur) {
+    if ((cur as HTMLElement).hidden) return false;
+    if (cur.getAttribute('aria-hidden') === 'true') return false;
+    const style = (cur.getAttribute('style') || '').toLowerCase();
+    if (style.includes('display:none') || style.includes('visibility:hidden')) return false;
+    cur = cur.parentElement;
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // LinkedIn Easy Apply adapter (S7B scoping)
@@ -111,6 +130,42 @@ const CONTACT_INFO_EXACT = new Set([
   'home address',
 ]);
 
+// LinkedIn-specific label resolution: wraps shared resolveLabel with extra
+// fallbacks for LinkedIn's artdeco/fb-dash markup where the question text lives
+// in a container's textContent rather than a <label for>.
+function resolveLinkedInLabel(
+  field: Element,
+  root: ParentNode,
+): { label: string; source: import('./types.ts').LabelSource; context?: string } {
+  const primary = resolveLabel(field, root);
+  if (primary.label && primary.source !== 'none') return primary;
+  // Fallback: container textContent (fb-dash-form-element, artdeco-text-input, etc.)
+  const container =
+    field.closest('.fb-dash-form-element') ||
+    field.closest('.fb-form-element') ||
+    field.closest('.jobs-easy-apply-form-element') ||
+    field.closest('[class*="form-element"]') ||
+    field.closest('.artdeco-text-input') ||
+    field.closest('div');
+  if (container) {
+    // Clone container, remove the field and any button/help text, then use remaining text as label
+    const clone = container.cloneNode(true) as HTMLElement;
+    const toRemove = clone.querySelectorAll('input, select, textarea, button');
+    toRemove.forEach((el) => el.remove());
+    const txt = cleanLabel(clone.textContent || '');
+    if (txt.length >= 4 && txt.length <= 500) {
+      // Exclude pure contact-info exact matches and cover-letter
+      if (!isCoverLetterField(field, txt) && !CONTACT_INFO_EXACT.has(txt.toLowerCase().trim())) {
+        // Treat as proximity if it looks like a question (contains ? or descriptive)
+        if (txt.includes('?') || txt.length >= 12) {
+          return { label: txt, source: 'proximity' };
+        }
+      }
+    }
+  }
+  return primary;
+}
+
 // Employer-question signal: a visible, labeled, non-contact-info, non-cover-letter
 // field whose label looks like a real question (contains "?" or is a descriptive
 // prompt). Used to confirm generic Fuse form-wrapper markers actually belong to
@@ -122,7 +177,7 @@ function hasEmployerQuestionSignal(root: Element): boolean {
     const type = (f.getAttribute('type') || '').toLowerCase();
     if (type === 'hidden' || type === 'file') continue;
     if (!isVisible(f as Element)) continue;
-    const { label } = resolveLabel(f as Element, root as unknown as ParentNode);
+    const { label } = resolveLinkedInLabel(f as Element, root as unknown as ParentNode);
     if (!label) continue;
     if (isCoverLetterField(f as Element, label)) continue;
     const low = label.toLowerCase().trim();
@@ -137,16 +192,27 @@ function findEasyApplyModal(root: ParentNode): Element | null {
   const modalSelectors = [
     '.jobs-easy-apply-modal',
     '.jobs-easy-apply-content',
+    '.jobs-easy-apply-modal__content',
     '[data-test-modal="easy-apply-modal"]',
+    '[data-test-modal-id="easy-apply-modal"]',
+    '#artdeco-modal-outlet [role="dialog"]',
+    '#artdeco-modal-outlet .artdeco-modal',
     '.artdeco-modal--is-open',
     '.artdeco-modal',
     '[role="dialog"]',
   ];
-  // Prefer modal that actually contains form fields
+  // Prefer modal that actually contains form fields (using LinkedIn-permissive selector)
   for (const sel of modalSelectors) {
     const el = (root as Document).querySelector?.(sel);
     if (el) {
       if (el.querySelector(FIELD_SELECTOR)) return el;
+    }
+  }
+  // Also check shared selector in case LinkedIn uses stricter markup
+  for (const sel of modalSelectors) {
+    const el = (root as Document).querySelector?.(sel);
+    if (el) {
+      if (el.querySelector(SHARED_FIELD_SELECTOR)) return el;
     }
   }
   // Fallback: any matching dialog, but only if it looks like Easy Apply (has text hint)
@@ -245,7 +311,7 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
   const seenIds = new Set<string>();
 
   for (const field of fields) {
-    const { label, source, context: labelCtx } = resolveLabel(field, scope);
+    const { label, source, context: labelCtx } = resolveLinkedInLabel(field, scope);
     if (!label || source === 'none') continue;
     if (label.length < 4) continue;
     if (label.length > 500) continue;

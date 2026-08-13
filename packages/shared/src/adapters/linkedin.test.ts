@@ -387,4 +387,83 @@ describe('extractLinkedInQuestions', () => {
     expect(res.questions).toHaveLength(1);
     expect(res.questions[0].label).toContain('work permit');
   });
+
+  // Regression: ProSource live shape - 6 required text inputs with artdeco markup
+  // Captain reported Additional Questions header with 6 text inputs like
+  // "How many years is your QA experience?" etc. were missed (panel showed 0).
+  // This fixture mimics LinkedIn's artdeco-text-input + fb-dash wrapper where
+  // the label text lives in a container's textContent (not always <label for>),
+  // and inputs are generic <input> without explicit label[for] in some variants.
+  it('regression: ProSource 6 QA years questions with artdeco/fb-dash markup', () => {
+    const doc = dom(`
+      <html><body>
+        <div id="artdeco-modal-outlet">
+          <div class="artdeco-modal artdeco-modal--is-open" role="dialog" data-test-modal-id="easy-apply-modal">
+            <div class="jobs-easy-apply-content">
+              <h3 class="t-16">Additional Questions</h3>
+              <form>
+                <div class="fb-dash-form-element jobs-easy-apply-form-element">
+                  <div class="artdeco-text-input artdeco-text-input--container">
+                    <label for="single-line-text-form-component-formElement-1">How many years is your QA experience? *</label>
+                    <input id="single-line-text-form-component-formElement-1" type="text" />
+                  </div>
+                </div>
+                <div class="fb-dash-form-element">
+                  <div class="artdeco-text-input">
+                    <span class="artdeco-text-input--label">How many years is your Manual QA experience? *</span>
+                    <input name="manualQa" type="text" />
+                  </div>
+                </div>
+                <div class="fb-dash-form-element">
+                  <div class="artdeco-text-input">
+                    <span>How many years is your experience with Playwright? *</span>
+                    <input name="playwrightYears" type="text" />
+                  </div>
+                </div>
+                <div class="fb-dash-form-element">
+                  <label for="q4">How many years is your experience with automation testing? *</label>
+                  <input id="q4" name="autoYears" type="text" />
+                </div>
+                <div class="fb-dash-form-element">
+                  <label for="q5">How many years is your experience with API testing? *</label>
+                  <input id="q5" name="apiYears" type="text" />
+                </div>
+                <div class="fb-dash-form-element">
+                  <div class="artdeco-text-input">
+                    <div class="fb-form-element-label">How many years is your experience with Agile? *</div>
+                    <input name="agileYears" type="text" />
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </body></html>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions.length).toBeGreaterThanOrEqual(6);
+    const labels = res.questions.map((q) => q.label);
+    expect(labels.some((l) => l.includes('QA experience'))).toBe(true);
+    expect(labels.some((l) => l.includes('Playwright'))).toBe(true);
+    expect(labels.some((l) => l.includes('Agile'))).toBe(true);
+  });
+
+  it('regression: artdeco container textContent fallback without label[for]', () => {
+    const doc = dom(`
+      <div class="artdeco-modal artdeco-modal--is-open" role="dialog">
+        <h3>Additional Questions</h3>
+        <div class="jobs-easy-apply-content">
+          <form>
+            <div class="artdeco-text-input">
+              <div>How many years is your QA experience? *</div>
+              <input name="q1" type="text" />
+            </div>
+          </form>
+        </div>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toContain('QA experience');
+  });
 });
