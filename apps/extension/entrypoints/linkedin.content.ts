@@ -99,7 +99,6 @@ export default defineContentScript({
 
     const initTimer = window.setTimeout(scanAndBroadcast, 800);
     const observer = new MutationObserver(() => {
-      ensureShadowObservers();
       debouncedScan();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: false });
