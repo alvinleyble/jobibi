@@ -87,6 +87,52 @@ function extractLinkedInJobContext(root: ParentNode): JobContext {
   return ctx;
 }
 
+const STEP_MARKER_SELECTOR =
+  '.fb-dash-form-element, .fb-form-element, .jobs-easy-apply-form-element, [data-test-text-entity-list-form-component], [data-test-form-element]';
+
+const CONTACT_INFO_EXACT = new Set([
+  'phone',
+  'phone number',
+  'mobile phone number',
+  'email',
+  'email address',
+  'city',
+  'street address',
+  'state',
+  'province',
+  'zip code',
+  'postal code',
+  'country',
+  'first name',
+  'last name',
+  'full name',
+  'address',
+  'location',
+  'home address',
+]);
+
+// Employer-question signal: a visible, labeled, non-contact-info, non-cover-letter
+// field whose label looks like a real question (contains "?" or is a descriptive
+// prompt). Used to confirm generic Fuse form-wrapper markers actually belong to
+// the Additional Questions step rather than a contact-info/resume step that
+// happens to share the same wrapper classes.
+function hasEmployerQuestionSignal(root: Element): boolean {
+  const fields = Array.from(root.querySelectorAll(FIELD_SELECTOR));
+  for (const f of fields) {
+    const type = (f.getAttribute('type') || '').toLowerCase();
+    if (type === 'hidden' || type === 'file') continue;
+    if (!isVisible(f as Element)) continue;
+    const { label } = resolveLabel(f as Element, root as unknown as ParentNode);
+    if (!label) continue;
+    if (isCoverLetterField(f as Element, label)) continue;
+    const low = label.toLowerCase().trim();
+    if (CONTACT_INFO_EXACT.has(low)) continue;
+    if (label.includes('?')) return true;
+    if (label.length >= 12) return true;
+  }
+  return false;
+}
+
 function findEasyApplyModal(root: ParentNode): Element | null {
   const modalSelectors = [
     '.jobs-easy-apply-modal',
@@ -109,7 +155,12 @@ function findEasyApplyModal(root: ParentNode): Element | null {
     if (el) {
       const txt = (el.textContent || '').toLowerCase();
       // Heuristic: Easy Apply modals contain these markers
-      if (txt.includes('easy apply') || txt.includes('additional questions') || el.querySelector('.fb-dash-form-element, .fb-form-element, .jobs-easy-apply-form-element')) {
+      if (txt.includes('easy apply') || txt.includes('additional questions')) {
+        return el;
+      }
+      // Generic Fuse form-wrapper markers alone aren't scoped to Easy Apply;
+      // require an employer-question signal too before trusting them.
+      if (el.querySelector(STEP_MARKER_SELECTOR) && hasEmployerQuestionSignal(el)) {
         return el;
       }
     }
@@ -127,7 +178,6 @@ function isCoverLetterField(field: Element, label: string): boolean {
   if (lowLabel.includes('cover letter') || lowLabel.includes('coverletter')) return true;
   const aria = (field.getAttribute('aria-label') || '').toLowerCase();
   if (aria.includes('cover letter')) return true;
-  if (aria === 'write a cover letter') return true;
   const ph = (field.getAttribute('placeholder') || '').toLowerCase();
   if (ph.includes('cover letter') || ph.includes('introduce yourself')) return true;
   // Also check placeholder that commonly belongs to cover letter draft area
@@ -139,47 +189,12 @@ function isCoverLetterField(field: Element, label: string): boolean {
 function isAdditionalQuestionsStep(modal: Element): boolean {
   const txt = (modal.textContent || '').toLowerCase();
   if (txt.includes('additional questions')) return true;
-  if (modal.querySelector('.fb-dash-form-element, .fb-form-element, .jobs-easy-apply-form-element, [data-test-text-entity-list-form-component], [data-test-form-element]')) {
-    return true;
-  }
-  // Fallback heuristic: modal contains at least one field whose label looks like an employer question
-  // (contains ? or is long multi-word). This covers test fixtures that lack LinkedIn-specific classes.
-  // We avoid counting cover-letter or obvious contact-info labels as employer question signal.
-  const contactInfoExact = new Set([
-    'phone',
-    'phone number',
-    'mobile phone number',
-    'email',
-    'email address',
-    'city',
-    'street address',
-    'state',
-    'province',
-    'zip code',
-    'postal code',
-    'country',
-    'first name',
-    'last name',
-    'full name',
-    'address',
-    'location',
-    'home address',
-  ]);
-  const fields = Array.from(modal.querySelectorAll(FIELD_SELECTOR));
-  for (const f of fields) {
-    const type = (f.getAttribute('type') || '').toLowerCase();
-    if (type === 'hidden' || type === 'file') continue;
-    if (!isVisible(f as Element)) continue;
-    const { label } = resolveLabel(f as Element, modal as unknown as ParentNode);
-    if (!label) continue;
-    if (isCoverLetterField(f as Element, label)) continue;
-    const low = label.toLowerCase().trim();
-    if (contactInfoExact.has(low)) continue;
-    // employer question heuristics: ? or reasonably descriptive prompt
-    if (label.includes('?')) return true;
-    if (label.length >= 12) return true;
-  }
-  return false;
+  // Generic Fuse form-wrapper markers (fb-dash-form-element etc.) are not
+  // scoped to the Additional Questions step alone — contact-info/resume
+  // steps commonly share them. An employer-question signal is required
+  // regardless of marker presence, so a bare marker can't misclassify a
+  // contact-info/resume step as Additional Questions.
+  return hasEmployerQuestionSignal(modal);
 }
 
 export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
@@ -270,16 +285,10 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
 
   // S7B cover-letter carve-out: do NOT specially target cover letter UNLESS co-located with employer questions
   // Same page-level presence signal: employer question exists in this step
-  let questions: ExtractedQuestion[];
-  if (coverCandidates.length > 0 && employerCandidates.length === 0) {
-    // No employer question present in this step -> cover letter not co-located, exclude it
-    questions = [];
-  } else if (coverCandidates.length > 0 && employerCandidates.length > 0) {
-    // Co-located: keep both (no special exclusion)
-    questions = [...employerCandidates, ...coverCandidates];
-  } else {
-    questions = employerCandidates;
-  }
+  const questions: ExtractedQuestion[] =
+    employerCandidates.length > 0
+      ? [...employerCandidates, ...coverCandidates]
+      : employerCandidates;
 
   return { questions, jobContext, host, adapter: 'linkedin' };
 }
