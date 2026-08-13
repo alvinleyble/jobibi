@@ -94,8 +94,13 @@ export default function JobStreetQuestions() {
           // S7 extraction-failure telemetry: write under caller's JWT (mirrors gate_decisions pattern)
           void (async () => {
             try {
+              const {
+                data: { user },
+              } = await supabase.auth.getUser();
+              if (!user) return;
               const urlHash = payload.url ? btoa(payload.url).slice(0, 32) : null;
               await supabase.from('extraction_failures').insert({
+                user_id: user.id,
                 adapter: payload.adapter,
                 host: payload.host,
                 url: payload.url,
