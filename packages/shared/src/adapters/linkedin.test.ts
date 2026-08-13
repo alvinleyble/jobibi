@@ -466,4 +466,114 @@ describe('extractLinkedInQuestions', () => {
     expect(res.questions).toHaveLength(1);
     expect(res.questions[0].label).toContain('QA experience');
   });
+
+  // Regression: real LinkedIn Easy Apply modal lives inside an OPEN Shadow DOM
+  // under #interop-outlet (and #shadow-host-companion). Plain
+  // document.querySelectorAll never crosses that boundary — every selector-variant
+  // fix found 0 questions until the adapter pierced the shadow root.
+  // These fixtures use JSDOM's attachShadow to prevent regression.
+  function domWithInteropShadow(shadowHtml: string, outerHtml = ''): Document {
+    const doc = dom(`<html><body><div id="interop-outlet"></div>${outerHtml}</body></html>`);
+    const host = doc.getElementById('interop-outlet') as unknown as { attachShadow: (o: { mode: string }) => ShadowRoot };
+    const sr = host.attachShadow({ mode: 'open' }) as unknown as Document;
+    // ShadowRoot supports innerHTML in JSDOM
+    (sr as unknown as { innerHTML: string }).innerHTML = shadowHtml;
+    return doc;
+  }
+
+  it('shadow: detects Additional Questions inside #interop-outlet open shadowRoot (ProSource shape)', () => {
+    const doc = domWithInteropShadow(
+      `
+      <div role="dialog" class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal">
+        <div class="jobs-easy-apply-modal__content">
+          <h3>Additional Questions</h3>
+          <form>
+            <div class="fb-dash-form-element">
+              <label for="single-line-text-form-component-formElement-1">How many years is your QA experience?</label>
+              <input id="single-line-text-form-component-formElement-1" type="text" />
+            </div>
+            <div class="fb-dash-form-element">
+              <label for="q2">How many years is your Manual QA experience?</label>
+              <input id="q2" type="text" />
+            </div>
+            <div class="fb-dash-form-element">
+              <label for="q3">How many years is your experience with Playwright?</label>
+              <input id="q3" type="text" />
+            </div>
+          </form>
+        </div>
+      </div>
+      `,
+      `<nav><input name="search" placeholder="Search jobs" /></nav>
+       <div class="jobs-search-results"><label for="kw">Keyword</label><input id="kw" name="keyword" type="text" /></div>
+       <h1 class="jobs-unified-top-card__job-title">QA Engineer</h1>`,
+    );
+    const res = extractLinkedInQuestions(doc);
+    // Without shadow piercing this is 0 — that was the entire S7B bug on the real page.
+    expect(res.questions.length).toBeGreaterThanOrEqual(3);
+    const labels = res.questions.map((q) => q.label);
+    expect(labels.some((l) => l.includes('QA experience'))).toBe(true);
+    expect(labels.some((l) => l.includes('Playwright'))).toBe(true);
+    // Nav/filter chrome outside shadow must not leak in
+    expect(labels.some((l) => l.toLowerCase().includes('search jobs'))).toBe(false);
+  });
+
+  it('shadow: generic host with open shadowRoot is also pierced (not just #interop-outlet)', () => {
+    const doc = dom(`<html><body><div id="my-host"></div></body></html>`);
+    const host = doc.getElementById('my-host') as unknown as { attachShadow: (o: { mode: string }) => ShadowRoot };
+    const sr = host.attachShadow({ mode: 'open' }) as unknown as { innerHTML: string };
+    sr.innerHTML = `
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <label for="q1">Why do you want this role?</label>
+          <textarea id="q1" name="motivation"></textarea>
+        </form>
+      </div>
+    `;
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toBe('Why do you want this role?');
+  });
+
+  it('shadow: cover-letter carve-out still holds inside shadow (alone excluded, co-located included)', () => {
+    const alone = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <label for="cover">Cover letter</label>
+          <textarea id="cover" name="coverLetter"></textarea>
+        </form>
+      </div>
+    `);
+    expect(extractLinkedInQuestions(alone).questions).toHaveLength(0);
+
+    const colocated = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <label for="q1">Why do you want this role?</label>
+          <textarea id="q1"></textarea>
+          <label for="cover">Cover letter</label>
+          <textarea id="cover"></textarea>
+        </form>
+      </div>
+    `);
+    const res2 = extractLinkedInQuestions(colocated);
+    expect(res2.questions.some((q) => q.label.toLowerCase().includes('cover letter'))).toBe(true);
+    expect(res2.questions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shadow: contact-info step inside shadow is still skipped', () => {
+    const doc = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <label for="phone">Mobile phone number</label><input id="phone" type="tel" />
+          <label for="email">Email address</label><input id="email" type="email" />
+        </form>
+      </div>
+    `);
+    expect(extractLinkedInQuestions(doc).questions).toHaveLength(0);
+  });
 });

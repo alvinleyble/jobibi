@@ -32,8 +32,42 @@ function isVisible(el: Element): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Shadow-DOM piercing (S7B fix)
+// - LinkedIn renders the entire Easy Apply modal inside an OPEN Shadow DOM
+//   under #interop-outlet (and #shadow-host-companion) at one level deep.
+//   Plain document.querySelectorAll never crosses a shadow boundary, so every
+//   previous selector-variant fix found zero questions on the real page.
+// - Piercing is shallow and cheap: check known hosts plus any element with
+//   an open shadowRoot, one level deep only (no recursion). This covers the
+//   real page's two shadow hosts and any JSDOM fixture using attachShadow.
+// ---------------------------------------------------------------------------
+function getSearchRoots(root: ParentNode): ParentNode[] {
+  const roots: ParentNode[] = [root];
+  const doc = root as Document;
+  if (!doc.querySelectorAll) return roots;
+  // Known LinkedIn interop hosts
+  for (const id of ['interop-outlet', 'shadow-host-companion']) {
+    try {
+      const host = doc.getElementById?.(id) as unknown as { shadowRoot?: ParentNode } | null;
+      const sr = host?.shadowRoot;
+      if (sr && !roots.includes(sr)) roots.push(sr);
+    } catch {}
+  }
+  // Generic one-level scan: any element with an open shadowRoot
+  try {
+    const all = doc.querySelectorAll('*');
+    for (const el of Array.from(all)) {
+      const sr = (el as unknown as { shadowRoot?: ParentNode }).shadowRoot;
+      if (sr && !roots.includes(sr)) roots.push(sr);
+    }
+  } catch {}
+  return roots;
+}
+
+// ---------------------------------------------------------------------------
 // LinkedIn Easy Apply adapter (S7B scoping)
-// - Detects only within Easy Apply dialog container.
+// - Detects only within Easy Apply dialog container (piercing open shadow
+//   roots — see getSearchRoots above).
 // - Within dialog, detects only on Additional Questions step (header or
 //   employer-question markers). Skips contact-info, resume, review steps and
 //   underlying search page entirely.
@@ -194,6 +228,7 @@ function hasEmployerQuestionSignal(root: Element): boolean {
 }
 
 function findEasyApplyModal(root: ParentNode): Element | null {
+  const roots = getSearchRoots(root);
   const modalSelectors = [
     '.jobs-easy-apply-modal',
     '.jobs-easy-apply-content',
@@ -208,38 +243,42 @@ function findEasyApplyModal(root: ParentNode): Element | null {
   ];
   // Prefer modal that actually contains form fields (using LinkedIn-permissive selector)
   for (const sel of modalSelectors) {
-    const el = (root as Document).querySelector?.(sel);
-    if (el) {
-      if (el.querySelector(FIELD_SELECTOR)) return el;
+    for (const r of roots) {
+      const el = (r as Document).querySelector?.(sel);
+      if (el && el.querySelector(FIELD_SELECTOR)) return el;
     }
   }
   // Also check shared selector in case LinkedIn uses stricter markup
   for (const sel of modalSelectors) {
-    const el = (root as Document).querySelector?.(sel);
-    if (el) {
-      if (el.querySelector(SHARED_FIELD_SELECTOR)) return el;
+    for (const r of roots) {
+      const el = (r as Document).querySelector?.(sel);
+      if (el && el.querySelector(SHARED_FIELD_SELECTOR)) return el;
     }
   }
   // Fallback: any matching dialog, but only if it looks like Easy Apply (has text hint)
   for (const sel of modalSelectors) {
-    const el = (root as Document).querySelector?.(sel) as Element | null;
-    if (el) {
-      const txt = (el.textContent || '').toLowerCase();
-      // Heuristic: Easy Apply modals contain these markers
-      if (txt.includes('easy apply') || txt.includes('additional questions')) {
-        return el;
-      }
-      // Generic Fuse form-wrapper markers alone aren't scoped to Easy Apply;
-      // require an employer-question signal too before trusting them.
-      if (el.querySelector(STEP_MARKER_SELECTOR) && hasEmployerQuestionSignal(el)) {
-        return el;
+    for (const r of roots) {
+      const el = (r as Document).querySelector?.(sel) as Element | null;
+      if (el) {
+        const txt = (el.textContent || '').toLowerCase();
+        // Heuristic: Easy Apply modals contain these markers
+        if (txt.includes('easy apply') || txt.includes('additional questions')) {
+          return el;
+        }
+        // Generic Fuse form-wrapper markers alone aren't scoped to Easy Apply;
+        // require an employer-question signal too before trusting them.
+        if (el.querySelector(STEP_MARKER_SELECTOR) && hasEmployerQuestionSignal(el)) {
+          return el;
+        }
       }
     }
   }
   // Last resort: any dialog/modal
   for (const sel of modalSelectors) {
-    const el = (root as Document).querySelector?.(sel);
-    if (el) return el;
+    for (const r of roots) {
+      const el = (r as Document).querySelector?.(sel);
+      if (el) return el;
+    }
   }
   return null;
 }

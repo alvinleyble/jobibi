@@ -12,7 +12,41 @@ export default defineContentScript({
     const pendingDraftMap = new Map<string, string>();
     const suggestionMappingById = new Map<string, ExtractedQuestion>();
 
+    // Shadow-DOM piercing for content-script DOM queries (S7B fix — mirrors
+    // the adapter's getSearchRoots; shallow one-level check for
+    // #interop-outlet / #shadow-host-companion plus any open shadowRoot).
+    function getShadowRoots(): ParentNode[] {
+      const roots: ParentNode[] = [document];
+      for (const id of ['interop-outlet', 'shadow-host-companion']) {
+        try {
+          const host = document.getElementById(id) as unknown as { shadowRoot?: ParentNode } | null;
+          const sr = host?.shadowRoot;
+          if (sr && !roots.includes(sr)) roots.push(sr);
+        } catch {}
+      }
+      try {
+        const all = document.querySelectorAll('*');
+        for (const el of Array.from(all)) {
+          const sr = (el as unknown as { shadowRoot?: ParentNode }).shadowRoot;
+          if (sr && !roots.includes(sr)) roots.push(sr);
+        }
+      } catch {}
+      return roots;
+    }
+    function queryAcross(selector: string): Element | null {
+      for (const r of getShadowRoots()) {
+        try {
+          const el = (r as unknown as Document).querySelector?.(selector);
+          if (el) return el;
+        } catch {}
+      }
+      return null;
+    }
+
     function scanAndBroadcast() {
+      try {
+        ensureShadowObservers();
+      } catch {}
       const result = extractLinkedInQuestions(document);
       const key = JSON.stringify(result.questions.map((q) => [q.id, q.label, q.confidence]));
       const lastKey = lastResult ? JSON.stringify(lastResult.questions.map((q) => [q.id, q.label, q.confidence])) : null;
@@ -28,13 +62,20 @@ export default defineContentScript({
     function maybeLogExtractionFailure(result: ExtractionResult) {
       // Telemetry: log when adapter expected questions but found none.
       // Heuristic: Easy Apply modal/dialog present but no questions extracted.
-      const modalPresent = !!document.querySelector(
+      const modalPresent = !!queryAcross(
         '.jobs-easy-apply-modal, .jobs-easy-apply-content, [data-test-modal="easy-apply-modal"], .artdeco-modal--is-open, [role="dialog"]',
       );
-      const hasFormFields = !!document.querySelector('form input, form textarea, form select');
+      const hasFormFields = !!queryAcross('form input, form textarea, form select');
       if (modalPresent && hasFormFields && result.questions.length === 0) {
-        // Count raw fields for telemetry
-        const rawCount = document.querySelectorAll('textarea, input[type="text"], input[type="email"], input[type="tel"], input[type="number"], select, input[type="radio"], input[type="checkbox"]').length;
+        // Count raw fields for telemetry (across shadow roots too)
+        let rawCount = 0;
+        for (const r of getShadowRoots()) {
+          try {
+            rawCount += (r as unknown as Document).querySelectorAll?.(
+              'textarea, input[type="text"], input[type="email"], input[type="tel"], input[type="number"], select, input[type="radio"], input[type="checkbox"]',
+            )?.length ?? 0;
+          } catch {}
+        }
         browser.runtime
           .sendMessage({
             type: 'JOBIBI_EXTRACTION_FAILURE',
@@ -57,8 +98,26 @@ export default defineContentScript({
     }
 
     const initTimer = window.setTimeout(scanAndBroadcast, 800);
-    const observer = new MutationObserver(debouncedScan);
+    const observer = new MutationObserver(() => {
+      ensureShadowObservers();
+      debouncedScan();
+    });
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: false });
+    // Also observe any existing shadow roots (and future ones discovered on each scan)
+    const observedShadowRoots = new Set<ParentNode>();
+    function ensureShadowObservers() {
+      for (const sr of getShadowRoots()) {
+        if (sr !== (document as unknown as ParentNode) && !observedShadowRoots.has(sr)) {
+          try {
+            observer.observe(sr as unknown as Node, { childList: true, subtree: true, attributes: false });
+            observedShadowRoots.add(sr);
+          } catch {}
+        }
+      }
+    }
+    ensureShadowObservers();
+    // Poll once more shortly after init in case shadow host is injected late
+    window.setTimeout(ensureShadowObservers, 1500);
 
     function readFieldValue(el: Element): string {
       if (el instanceof HTMLTextAreaElement) return el.value;
@@ -76,19 +135,26 @@ export default defineContentScript({
 
     function getFieldElement(q: ExtractedQuestion): Element | null {
       try {
-        const bySelector = document.querySelector(q.field.selector);
-        if (bySelector) return bySelector;
+        const byAcross = queryAcross(q.field.selector);
+        if (byAcross) return byAcross;
       } catch {}
       if (q.field.id) {
-        const byId = document.getElementById(q.field.id);
-        if (byId) return byId;
+        for (const r of getShadowRoots()) {
+          try {
+            const byId = (r as unknown as Document).getElementById?.(q.field.id);
+            if (byId) return byId as unknown as Element;
+            // ShadowRoots may not have getElementById — fallback to query
+            const byIdQ = (r as unknown as Document).querySelector?.(`#${q.field.id.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`)}`);
+            if (byIdQ) return byIdQ;
+          } catch {}
+        }
       }
       if (q.field.name) {
         try {
           const esc = (globalThis as unknown as { CSS?: { escape: (v: string) => string } }).CSS?.escape
             ? (globalThis as unknown as { CSS: { escape: (v: string) => string } }).CSS.escape(q.field.name)
             : q.field.name.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
-          const byName = document.querySelector(`${q.field.tagName}[name="${esc}"]`);
+          const byName = queryAcross(`${q.field.tagName}[name="${esc}"]`);
           if (byName) return byName;
         } catch {}
       }
