@@ -45,7 +45,7 @@ export function isVisible(el: Element): boolean {
   if (html.hidden) return false;
   if (el.getAttribute('aria-hidden') === 'true') return false;
   const style = (el.getAttribute('style') || '').toLowerCase();
-  if (style.includes('display:none') || style.includes('visibility:hidden')) return false;
+  if (/display\s*:\s*none/.test(style) || /visibility\s*:\s*hidden/.test(style)) return false;
   return true;
 }
 

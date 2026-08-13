@@ -25,7 +25,7 @@ function isVisible(el: Element): boolean {
     if ((cur as HTMLElement).hidden) return false;
     if (cur.getAttribute('aria-hidden') === 'true') return false;
     const style = (cur.getAttribute('style') || '').toLowerCase();
-    if (style.includes('display:none') || style.includes('visibility:hidden')) return false;
+    if (/display\s*:\s*none/.test(style) || /visibility\s*:\s*hidden/.test(style)) return false;
     cur = cur.parentElement;
   }
   return true;
@@ -145,18 +145,14 @@ function resolveLinkedInLabel(
     field.closest('.fb-form-element') ||
     field.closest('.jobs-easy-apply-form-element') ||
     field.closest('[class*="form-element"]') ||
-    field.closest('.artdeco-text-input') ||
-    field.closest('div');
+    field.closest('.artdeco-text-input');
   if (container) {
-    // Clone container, remove the field and any button/help text, then use remaining text as label
     const clone = container.cloneNode(true) as HTMLElement;
     const toRemove = clone.querySelectorAll('input, select, textarea, button');
     toRemove.forEach((el) => el.remove());
     const txt = cleanLabel(clone.textContent || '');
     if (txt.length >= 4 && txt.length <= 500) {
-      // Exclude pure contact-info exact matches and cover-letter
-      if (!isCoverLetterField(field, txt) && !CONTACT_INFO_EXACT.has(txt.toLowerCase().trim())) {
-        // Treat as proximity if it looks like a question (contains ? or descriptive)
+      if (!CONTACT_INFO_EXACT.has(txt.toLowerCase().trim())) {
         if (txt.includes('?') || txt.length >= 12) {
           return { label: txt, source: 'proximity' };
         }
@@ -175,7 +171,16 @@ function hasEmployerQuestionSignal(root: Element): boolean {
   const fields = Array.from(root.querySelectorAll(FIELD_SELECTOR));
   for (const f of fields) {
     const type = (f.getAttribute('type') || '').toLowerCase();
-    if (type === 'hidden' || type === 'file') continue;
+    if (
+      type === 'hidden' ||
+      type === 'file' ||
+      type === 'password' ||
+      type === 'submit' ||
+      type === 'button' ||
+      type === 'reset' ||
+      type === 'image'
+    )
+      continue;
     if (!isVisible(f as Element)) continue;
     const { label } = resolveLinkedInLabel(f as Element, root as unknown as ParentNode);
     if (!label) continue;
@@ -289,7 +294,15 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
   const fields = rawFields.filter((el) => {
     if (!isVisible(el)) return false;
     const type = (el.getAttribute('type') || '').toLowerCase();
-    if (type === 'hidden' || type === 'password') return false;
+    if (
+      type === 'hidden' ||
+      type === 'password' ||
+      type === 'submit' ||
+      type === 'button' ||
+      type === 'reset' ||
+      type === 'image'
+    )
+      return false;
     if (type === 'file') return false;
     const name = (el.getAttribute('name') || '').toLowerCase();
     if (['q', 'search', 'keyword'].includes(name) && !el.closest('form')) return false;
