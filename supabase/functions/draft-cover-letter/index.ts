@@ -193,10 +193,8 @@ Deno.serve(async (req) => {
     } catch {
       return jsonResponse({ error: 'Model returned non-JSON' }, 502);
     }
-    let draft = (parsedContent.draft ?? '').slice(0, MAX_COVER_LETTER_CHARS);
+    const draft = (parsedContent.draft ?? '').slice(0, MAX_COVER_LETTER_CHARS);
     const sources = parsedContent.sources ?? [{ kind: 'memory_chunk', label: 'Your history', ref: 'memory' }];
-
-    if (draft.length > MAX_COVER_LETTER_CHARS) draft = draft.slice(0, MAX_COVER_LETTER_CHARS);
 
     return jsonResponse(
       DraftCoverLetterResponseSchema.parse({ draft, sources }),
