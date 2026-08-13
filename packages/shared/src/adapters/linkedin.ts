@@ -1,9 +1,9 @@
 import type { ExtractedQuestion, ExtractionResult, JobContext } from './types.ts';
 import {
   CONFIDENCE_BY_SOURCE,
-  FIELD_SELECTOR,
+  FIELD_SELECTOR as SHARED_FIELD_SELECTOR,
   fieldTypeFor,
-  isVisible,
+  isVisible as isVisibleBase,
   escapeCss,
   cleanLabel,
   fieldSelector,
@@ -12,10 +12,69 @@ import {
   contextFor,
 } from './helpers.ts';
 
+// LinkedIn-specific field selector: more permissive than shared (captures any
+// input/select/textarea - LinkedIn sometimes uses generic <input> without type
+// or with artdeco classes). Filtering for hidden/file etc happens later.
+const FIELD_SELECTOR = 'textarea, input, select';
+
+function isVisible(el: Element): boolean {
+  // Base checks (hidden, aria-hidden, inline style) plus ancestor hidden
+  if (!isVisibleBase(el)) return false;
+  let cur: Element | null = el.parentElement;
+  while (cur) {
+    if ((cur as HTMLElement).hidden) return false;
+    if (cur.getAttribute('aria-hidden') === 'true') return false;
+    const style = (cur.getAttribute('style') || '').toLowerCase();
+    if (/display\s*:\s*none/.test(style) || /visibility\s*:\s*hidden/.test(style)) return false;
+    cur = cur.parentElement;
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
-// LinkedIn Easy Apply adapter (S7)
-// Mirrors jobstreet.ts shape: confidence via CONFIDENCE_BY_SOURCE,
-// label-for/proximity/blob-PII guards. Scoped to Easy Apply modal.
+// Shadow-DOM piercing (S7B fix)
+// - LinkedIn renders the entire Easy Apply modal inside an OPEN Shadow DOM
+//   under #interop-outlet (and #shadow-host-companion) at one level deep.
+//   Plain document.querySelectorAll never crosses a shadow boundary, so every
+//   previous selector-variant fix found zero questions on the real page.
+// - Piercing is shallow and cheap: check known hosts plus any element with
+//   an open shadowRoot, one level deep only (no recursion). This covers the
+//   real page's two shadow hosts and any JSDOM fixture using attachShadow.
+// ---------------------------------------------------------------------------
+function getSearchRoots(root: ParentNode): ParentNode[] {
+  const roots: ParentNode[] = [root];
+  const doc = root as Document;
+  if (!doc.querySelectorAll) return roots;
+  // Known LinkedIn interop hosts
+  for (const id of ['interop-outlet', 'shadow-host-companion']) {
+    try {
+      const host = doc.getElementById?.(id) as unknown as { shadowRoot?: ParentNode } | null;
+      const sr = host?.shadowRoot;
+      if (sr && !roots.includes(sr)) roots.push(sr);
+    } catch {}
+  }
+  // Generic one-level scan: any element with an open shadowRoot
+  try {
+    const all = doc.querySelectorAll('*');
+    for (const el of Array.from(all)) {
+      const sr = (el as unknown as { shadowRoot?: ParentNode }).shadowRoot;
+      if (sr && !roots.includes(sr)) roots.push(sr);
+    }
+  } catch {}
+  return roots;
+}
+
+// ---------------------------------------------------------------------------
+// LinkedIn Easy Apply adapter (S7B scoping)
+// - Detects only within Easy Apply dialog container (piercing open shadow
+//   roots — see getSearchRoots above).
+// - Within dialog, detects only on Additional Questions step (header or
+//   employer-question markers). Skips contact-info, resume, review steps and
+//   underlying search page entirely.
+// - Cover Letter carve-out: a cover-letter field is excluded UNLESS it is
+//   co-located in the same step as real employer questions (same presence
+//   signal). Signal is "employer question exists in this step" — header or
+//   dash-form markers or question-like label.
 // Also opportunistically captures JD text when present behind modal (D11).
 // ---------------------------------------------------------------------------
 
@@ -59,7 +118,6 @@ function extractLinkedInJobContext(root: ParentNode): JobContext {
     }
   }
 
-  // D11: opportunistically capture JD text when already present in DOM behind modal
   const jdSelectors = [
     '.jobs-description-content__text',
     '.jobs-description__content',
@@ -82,28 +140,214 @@ function extractLinkedInJobContext(root: ParentNode): JobContext {
   return ctx;
 }
 
+const STEP_MARKER_SELECTOR =
+  '.fb-dash-form-element, .fb-form-element, .jobs-easy-apply-form-element, [data-test-text-entity-list-form-component], [data-test-form-element]';
+
+const CONTACT_INFO_EXACT = new Set([
+  'phone',
+  'phone number',
+  'mobile phone number',
+  'email',
+  'email address',
+  'city',
+  'street address',
+  'state',
+  'province',
+  'zip code',
+  'postal code',
+  'country',
+  'first name',
+  'last name',
+  'full name',
+  'address',
+  'location',
+  'home address',
+]);
+
+// Helper: deduplicate doubled labels like "Email addressEmail address"
+// (can occur when container's textContent concatenates two identical label nodes
+// without a separator, or via cloned text). Also handles spaced double.
+function dedupeLabelText(txt: string): string {
+  const trimmed = txt.trim();
+  if (trimmed.length >= 2 && trimmed.length % 2 === 0) {
+    const half = trimmed.length / 2;
+    const a = trimmed.slice(0, half);
+    const b = trimmed.slice(half);
+    if (a.toLowerCase() === b.toLowerCase()) return a.trim();
+  }
+  const words = trimmed.split(/\s+/);
+  if (words.length >= 2 && words.length % 2 === 0) {
+    const halfW = words.length / 2;
+    const first = words.slice(0, halfW).join(' ');
+    const second = words.slice(halfW).join(' ');
+    if (first.toLowerCase() === second.toLowerCase()) return first.trim();
+  }
+  return trimmed;
+}
+
+function isContactInfoLabel(label: string): boolean {
+  const low = label.toLowerCase().trim();
+  if (CONTACT_INFO_EXACT.has(low)) return true;
+  const deduped = dedupeLabelText(label).toLowerCase().trim();
+  if (deduped !== low && CONTACT_INFO_EXACT.has(deduped)) return true;
+  return false;
+}
+
+function isResumePickerLabel(label: string, field: Element): boolean {
+  const low = label.toLowerCase();
+  if (low.includes('resume')) return true;
+  if (low.includes('.pdf')) return true;
+  const name = (field.getAttribute('name') || '').toLowerCase();
+  if (name.includes('resume')) return true;
+  const aria = (field.getAttribute('aria-label') || '').toLowerCase();
+  if (aria.includes('resume')) return true;
+  return false;
+}
+
+// LinkedIn-specific label resolution: wraps shared resolveLabel with extra
+// fallbacks for LinkedIn's artdeco/fb-dash markup where the question text lives
+// in a container's textContent rather than a <label for>.
+function resolveLinkedInLabel(
+  field: Element,
+  root: ParentNode,
+): { label: string; source: import('./types.ts').LabelSource; context?: string } {
+  const primary = resolveLabel(field, root);
+  if (primary.label && primary.source !== 'none') return primary;
+  // Fallback: container textContent (fb-dash-form-element, artdeco-text-input, etc.)
+  const container =
+    field.closest('.fb-dash-form-element') ||
+    field.closest('.fb-form-element') ||
+    field.closest('.jobs-easy-apply-form-element') ||
+    field.closest('[class*="form-element"]') ||
+    field.closest('.artdeco-text-input');
+  if (container) {
+    const clone = container.cloneNode(true) as HTMLElement;
+    const toRemove = clone.querySelectorAll('input, select, textarea, button');
+    toRemove.forEach((el) => el.remove());
+    let txt = cleanLabel(clone.textContent || '');
+    // Fix doubling bug: container may contain two identical label nodes
+    // (e.g. "Email addressEmail address") — dedupe before any checks.
+    txt = dedupeLabelText(txt);
+    if (txt.length >= 4 && txt.length <= 500) {
+      if (!isContactInfoLabel(txt)) {
+        if (txt.includes('?') || txt.length >= 12) {
+          return { label: txt, source: 'proximity' };
+        }
+      }
+    }
+  }
+  return primary;
+}
+
+// Employer-question signal: a visible, labeled, non-contact-info, non-cover-letter
+// field whose label looks like a real question (contains "?" or is a descriptive
+// prompt). Used to confirm generic Fuse form-wrapper markers actually belong to
+// the Additional Questions step rather than a contact-info/resume step that
+// happens to share the same wrapper classes.
+function hasEmployerQuestionSignal(root: Element): boolean {
+  const fields = Array.from(root.querySelectorAll(FIELD_SELECTOR));
+  for (const f of fields) {
+    const type = (f.getAttribute('type') || '').toLowerCase();
+    if (
+      type === 'hidden' ||
+      type === 'file' ||
+      type === 'password' ||
+      type === 'submit' ||
+      type === 'button' ||
+      type === 'reset' ||
+      type === 'image'
+    )
+      continue;
+    if (!isVisible(f as Element)) continue;
+    const { label } = resolveLinkedInLabel(f as Element, root as unknown as ParentNode);
+    if (!label) continue;
+    if (isCoverLetterField(f as Element, label)) continue;
+    if (isContactInfoLabel(label)) continue;
+    if (isResumePickerLabel(label, f as Element)) continue;
+    if (label.includes('?')) return true;
+    if (label.length >= 12) return true;
+  }
+  return false;
+}
+
 function findEasyApplyModal(root: ParentNode): Element | null {
+  const roots = getSearchRoots(root);
   const modalSelectors = [
     '.jobs-easy-apply-modal',
     '.jobs-easy-apply-content',
+    '.jobs-easy-apply-modal__content',
     '[data-test-modal="easy-apply-modal"]',
+    '[data-test-modal-id="easy-apply-modal"]',
+    '#artdeco-modal-outlet [role="dialog"]',
+    '#artdeco-modal-outlet .artdeco-modal',
     '.artdeco-modal--is-open',
     '.artdeco-modal',
     '[role="dialog"]',
   ];
+  // Prefer modal that actually contains form fields (using LinkedIn-permissive selector)
   for (const sel of modalSelectors) {
-    const el = (root as Document).querySelector?.(sel);
-    if (el) {
-      // Prefer the one that actually contains form fields
-      if (el.querySelector(FIELD_SELECTOR)) return el;
+    for (const r of roots) {
+      const el = (r as Document).querySelector?.(sel);
+      if (el && el.querySelector(FIELD_SELECTOR)) return el;
     }
   }
-  // fallback: any dialog containing fields
+  // Also check shared selector in case LinkedIn uses stricter markup
   for (const sel of modalSelectors) {
-    const el = (root as Document).querySelector?.(sel);
-    if (el) return el;
+    for (const r of roots) {
+      const el = (r as Document).querySelector?.(sel);
+      if (el && el.querySelector(SHARED_FIELD_SELECTOR)) return el;
+    }
+  }
+  // Fallback: any matching dialog, but only if it looks like Easy Apply (has text hint)
+  for (const sel of modalSelectors) {
+    for (const r of roots) {
+      const el = (r as Document).querySelector?.(sel) as Element | null;
+      if (el) {
+        const txt = (el.textContent || '').toLowerCase();
+        // Heuristic: Easy Apply modals contain these markers
+        if (txt.includes('easy apply') || txt.includes('additional questions')) {
+          return el;
+        }
+        // Generic Fuse form-wrapper markers alone aren't scoped to Easy Apply;
+        // require an employer-question signal too before trusting them.
+        if (el.querySelector(STEP_MARKER_SELECTOR) && hasEmployerQuestionSignal(el)) {
+          return el;
+        }
+      }
+    }
+  }
+  // Last resort: any dialog/modal
+  for (const sel of modalSelectors) {
+    for (const r of roots) {
+      const el = (r as Document).querySelector?.(sel);
+      if (el) return el;
+    }
   }
   return null;
+}
+
+function isCoverLetterField(field: Element, label: string): boolean {
+  const lowLabel = label.toLowerCase();
+  if (lowLabel.includes('cover letter') || lowLabel.includes('coverletter')) return true;
+  const aria = (field.getAttribute('aria-label') || '').toLowerCase();
+  if (aria.includes('cover letter')) return true;
+  const ph = (field.getAttribute('placeholder') || '').toLowerCase();
+  if (ph.includes('cover letter') || ph.includes('introduce yourself')) return true;
+  // Also check placeholder that commonly belongs to cover letter draft area
+  // Generic detection: textarea with label exactly "Cover letter" (case-insensitive) is cover
+  if (lowLabel.trim() === 'cover letter') return true;
+  return false;
+}
+
+function isAdditionalQuestionsStep(modal: Element): boolean {
+  const txt = (modal.textContent || '').toLowerCase();
+  if (txt.includes('additional questions')) return true;
+  // Generic Fuse form-wrapper markers (fb-dash-form-element etc.) are not
+  // scoped to the Additional Questions step alone — contact-info/resume
+  // steps commonly share them. An employer-question signal is required
+  // regardless of marker presence, so a bare marker can't misclassify a
+  // contact-info/resume step as Additional Questions.
+  return hasEmployerQuestionSignal(modal);
 }
 
 export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
@@ -113,20 +357,37 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
     'linkedin.com';
 
   const modal = findEasyApplyModal(root);
-  // Scope to modal when present; otherwise scan whole doc (modal may not have opened yet)
-  const scope: ParentNode = (modal as unknown as ParentNode) ?? root;
+  const jobContext = extractLinkedInJobContext(root);
+
+  // S7B: if no Easy Apply dialog container, return no questions (skip search page entirely)
+  if (!modal) {
+    return { questions: [], jobContext, host, adapter: 'linkedin' };
+  }
+
+  // S7B: within dialog, only Additional Questions step
+  if (!isAdditionalQuestionsStep(modal)) {
+    return { questions: [], jobContext, host, adapter: 'linkedin' };
+  }
+
+  const scope: ParentNode = modal as unknown as ParentNode;
 
   const rawFields = Array.from((scope as Document | Element).querySelectorAll?.(FIELD_SELECTOR) ?? []);
 
   const fields = rawFields.filter((el) => {
     if (!isVisible(el)) return false;
     const type = (el.getAttribute('type') || '').toLowerCase();
-    if (type === 'hidden' || type === 'password') return false;
+    if (
+      type === 'hidden' ||
+      type === 'password' ||
+      type === 'submit' ||
+      type === 'button' ||
+      type === 'reset' ||
+      type === 'image'
+    )
+      return false;
     if (type === 'file') return false;
-    // Exclude nav/search inputs outside modal context
     const name = (el.getAttribute('name') || '').toLowerCase();
     if (['q', 'search', 'keyword'].includes(name) && !el.closest('form')) return false;
-    // Dedupe radio/checkbox groups
     if (type === 'radio' || type === 'checkbox') {
       const gname = el.getAttribute('name');
       if (gname) {
@@ -136,22 +397,25 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
         if (first !== el) return false;
       }
     }
-    // LinkedIn Easy Apply step scoping: when modal has step indicator,
-    // still include all fields — LinkedIn paginates inside modal, each step is valid
     return true;
   });
 
-  const questions: ExtractedQuestion[] = [];
+  // Build candidate questions, partitioning cover-letter vs employer
+  const employerCandidates: ExtractedQuestion[] = [];
+  const coverCandidates: ExtractedQuestion[] = [];
   const seenIds = new Set<string>();
 
   for (const field of fields) {
-    const { label, source, context: labelCtx } = resolveLabel(field, scope);
+    const { label, source, context: labelCtx } = resolveLinkedInLabel(field, scope);
     if (!label || source === 'none') continue;
     if (label.length < 4) continue;
     if (label.length > 500) continue;
     if (label.length > 220 && !label.trim().endsWith('?')) continue;
-    // PII/blob guard: skip huge non-question blobs
     if (label.length > 180 && !label.includes('?') && label.split(/\s+/).length > 25) continue;
+
+    // S7B: never surface contact-info or resume-picker fields as questions
+    if (isContactInfoLabel(label)) continue;
+    if (isResumePickerLabel(label, field)) continue;
 
     const fid = fieldId(field);
     if (seenIds.has(fid)) continue;
@@ -161,7 +425,7 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
     const confidence = CONFIDENCE_BY_SOURCE[source];
     const ftype = fieldTypeFor(field);
 
-    questions.push({
+    const q: ExtractedQuestion = {
       id: fid,
       label,
       fieldType: ftype,
@@ -175,10 +439,21 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
       },
       labelSource: source,
       confidence,
-    });
+    };
+
+    if (isCoverLetterField(field, label)) {
+      coverCandidates.push(q);
+    } else {
+      employerCandidates.push(q);
+    }
   }
 
-  const jobContext = extractLinkedInJobContext(root);
+  // S7B cover-letter carve-out: do NOT specially target cover letter UNLESS co-located with employer questions
+  // Same page-level presence signal: employer question exists in this step
+  const questions: ExtractedQuestion[] =
+    employerCandidates.length > 0
+      ? [...employerCandidates, ...coverCandidates]
+      : employerCandidates;
 
   return { questions, jobContext, host, adapter: 'linkedin' };
 }

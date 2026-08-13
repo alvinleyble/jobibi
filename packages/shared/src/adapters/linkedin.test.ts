@@ -128,8 +128,8 @@ describe('extractLinkedInQuestions', () => {
     const doc = dom(`
       <div class="jobs-easy-apply-modal">
         <form>
-          <label for="b">Cover letter</label>
-          <textarea id="b" name="cover"></textarea>
+          <label for="b">Why are you a good fit for this role?</label>
+          <textarea id="b" name="fit"></textarea>
         </form>
       </div>
     `);
@@ -212,5 +212,478 @@ describe('extractLinkedInQuestions', () => {
     `);
     const res = extractLinkedInQuestions(doc);
     expect(res.questions[0].label).toBe('Expected salary');
+  });
+
+  // S7B — detection scoping
+
+  it('scopes to Easy Apply dialog: nav/filter outside modal is ignored', () => {
+    const doc = dom(`
+      <html><body>
+        <nav>
+          <input name="search" placeholder="Search jobs" />
+          <label for="nav-filter">Filter by location</label>
+          <input id="nav-filter" name="filter" type="text" />
+        </nav>
+        <div class="jobs-search-results">
+          <input name="keyword" placeholder="Keyword filter" />
+        </div>
+        <div class="jobs-easy-apply-modal">
+          <form>
+            <label for="q1">Why do you want this role?</label>
+            <textarea id="q1" name="motivation"></textarea>
+          </form>
+        </div>
+      </body></html>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toBe('Why do you want this role?');
+  });
+
+  it('returns no questions when no Easy Apply dialog is present (search page only)', () => {
+    const doc = dom(`
+      <html><body>
+        <nav><input name="search" placeholder="Search" /></nav>
+        <div class="jobs-search-results">
+          <label for="kw">Keyword</label>
+          <input id="kw" name="keyword" type="text" />
+        </div>
+        <h1 class="jobs-unified-top-card__job-title">Backend Engineer</h1>
+      </body></html>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+    expect(res.jobContext.roleTitle).toBe('Backend Engineer');
+  });
+
+  it('skips contact-info step: phone/email/city fields alone produce no questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <label for="phone">Mobile phone number</label>
+          <input id="phone" name="phone" type="tel" />
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" />
+          <label for="city">City</label>
+          <input id="city" name="city" type="text" />
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('skips resume step: file input alone produces no questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Resume</h3>
+        <form>
+          <label for="resume">Upload resume</label>
+          <input id="resume" name="resume" type="file" />
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('skips review step: no fields or only summary produces no questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Review</h3>
+        <div>Please review your application</div>
+        <button>Submit application</button>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('detects only Additional Questions step: header plus employer questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <div class="fb-dash-form-element">
+          <label for="aq1">Have you completed the following level of education: Bachelor's Degree?</label>
+          <select id="aq1" name="education"><option>Yes</option><option>No</option></select>
+        </div>
+        <div class="fb-dash-form-element">
+          <label for="aq2">How many years of QA experience do you have?</label>
+          <input id="aq2" name="years" type="text" />
+        </div>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('cover-letter field alone is NOT detected (S8 carve-out)', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <label for="cover">Cover letter</label>
+          <textarea id="cover" name="coverLetter" placeholder="Write a cover letter"></textarea>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('cover-letter co-located with employer questions IS detected', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="q1">Why do you want to work at this company?</label>
+            <textarea id="q1" name="why"></textarea>
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="cover">Cover letter</label>
+            <textarea id="cover" name="coverLetter"></textarea>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    const cover = res.questions.find((q) => q.label.toLowerCase().includes('cover letter'));
+    expect(cover).toBeDefined();
+    expect(res.questions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('cover-letter co-located via presence signal without header still detected (same step)', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="q1">What is your greatest achievement?</label>
+            <textarea id="q1" name="achieve"></textarea>
+          </div>
+          <label for="cover2">Cover letter</label>
+          <textarea id="cover2" name="coverLetter2"></textarea>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    const cover = res.questions.find((q) => q.label.toLowerCase().includes('cover letter'));
+    expect(cover).toBeDefined();
+  });
+
+  it('detects employer question via modern fb-dash marker even without header', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <form>
+          <div class="fb-dash-form-element jobs-easy-apply-form-element">
+            <label for="fb1">Do you have a valid work permit for this location?</label>
+            <select id="fb1" name="permit"><option>Yes</option><option>No</option></select>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toContain('work permit');
+  });
+
+  // Regression: ProSource live shape - 6 required text inputs with artdeco markup
+  // Captain reported Additional Questions header with 6 text inputs like
+  // "How many years is your QA experience?" etc. were missed (panel showed 0).
+  // This fixture mimics LinkedIn's artdeco-text-input + fb-dash wrapper where
+  // the label text lives in a container's textContent (not always <label for>),
+  // and inputs are generic <input> without explicit label[for] in some variants.
+  it('regression: ProSource 6 QA years questions with artdeco/fb-dash markup', () => {
+    const doc = dom(`
+      <html><body>
+        <div id="artdeco-modal-outlet">
+          <div class="artdeco-modal artdeco-modal--is-open" role="dialog" data-test-modal-id="easy-apply-modal">
+            <div class="jobs-easy-apply-content">
+              <h3 class="t-16">Additional Questions</h3>
+              <form>
+                <div class="fb-dash-form-element jobs-easy-apply-form-element">
+                  <div class="artdeco-text-input artdeco-text-input--container">
+                    <label for="single-line-text-form-component-formElement-1">How many years is your QA experience? *</label>
+                    <input id="single-line-text-form-component-formElement-1" type="text" />
+                  </div>
+                </div>
+                <div class="fb-dash-form-element">
+                  <div class="artdeco-text-input">
+                    <span class="artdeco-text-input--label">How many years is your Manual QA experience? *</span>
+                    <input name="manualQa" type="text" />
+                  </div>
+                </div>
+                <div class="fb-dash-form-element">
+                  <div class="artdeco-text-input">
+                    <span>How many years is your experience with Playwright? *</span>
+                    <input name="playwrightYears" type="text" />
+                  </div>
+                </div>
+                <div class="fb-dash-form-element">
+                  <label for="q4">How many years is your experience with automation testing? *</label>
+                  <input id="q4" name="autoYears" type="text" />
+                </div>
+                <div class="fb-dash-form-element">
+                  <label for="q5">How many years is your experience with API testing? *</label>
+                  <input id="q5" name="apiYears" type="text" />
+                </div>
+                <div class="fb-dash-form-element">
+                  <div class="artdeco-text-input">
+                    <div class="fb-form-element-label">How many years is your experience with Agile? *</div>
+                    <input name="agileYears" type="text" />
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </body></html>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions.length).toBeGreaterThanOrEqual(6);
+    const labels = res.questions.map((q) => q.label);
+    expect(labels.some((l) => l.includes('QA experience'))).toBe(true);
+    expect(labels.some((l) => l.includes('Playwright'))).toBe(true);
+    expect(labels.some((l) => l.includes('Agile'))).toBe(true);
+  });
+
+  it('regression: artdeco container textContent fallback without label[for]', () => {
+    const doc = dom(`
+      <div class="artdeco-modal artdeco-modal--is-open" role="dialog">
+        <h3>Additional Questions</h3>
+        <div class="jobs-easy-apply-content">
+          <form>
+            <div class="artdeco-text-input">
+              <div>How many years is your QA experience? *</div>
+              <input name="q1" type="text" />
+            </div>
+          </form>
+        </div>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toContain('QA experience');
+  });
+
+  // Regression: real LinkedIn Easy Apply modal lives inside an OPEN Shadow DOM
+  // under #interop-outlet (and #shadow-host-companion). Plain
+  // document.querySelectorAll never crosses that boundary — every selector-variant
+  // fix found 0 questions until the adapter pierced the shadow root.
+  // These fixtures use JSDOM's attachShadow to prevent regression.
+  function domWithInteropShadow(shadowHtml: string, outerHtml = ''): Document {
+    const doc = dom(`<html><body><div id="interop-outlet"></div>${outerHtml}</body></html>`);
+    const host = doc.getElementById('interop-outlet') as unknown as { attachShadow: (o: { mode: string }) => ShadowRoot };
+    const sr = host.attachShadow({ mode: 'open' }) as unknown as Document;
+    // ShadowRoot supports innerHTML in JSDOM
+    (sr as unknown as { innerHTML: string }).innerHTML = shadowHtml;
+    return doc;
+  }
+
+  it('shadow: detects Additional Questions inside #interop-outlet open shadowRoot (ProSource shape)', () => {
+    const doc = domWithInteropShadow(
+      `
+      <div role="dialog" class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal">
+        <div class="jobs-easy-apply-modal__content">
+          <h3>Additional Questions</h3>
+          <form>
+            <div class="fb-dash-form-element">
+              <label for="single-line-text-form-component-formElement-1">How many years is your QA experience?</label>
+              <input id="single-line-text-form-component-formElement-1" type="text" />
+            </div>
+            <div class="fb-dash-form-element">
+              <label for="q2">How many years is your Manual QA experience?</label>
+              <input id="q2" type="text" />
+            </div>
+            <div class="fb-dash-form-element">
+              <label for="q3">How many years is your experience with Playwright?</label>
+              <input id="q3" type="text" />
+            </div>
+          </form>
+        </div>
+      </div>
+      `,
+      `<nav><input name="search" placeholder="Search jobs" /></nav>
+       <div class="jobs-search-results"><label for="kw">Keyword</label><input id="kw" name="keyword" type="text" /></div>
+       <h1 class="jobs-unified-top-card__job-title">QA Engineer</h1>`,
+    );
+    const res = extractLinkedInQuestions(doc);
+    // Without shadow piercing this is 0 — that was the entire S7B bug on the real page.
+    expect(res.questions.length).toBeGreaterThanOrEqual(3);
+    const labels = res.questions.map((q) => q.label);
+    expect(labels.some((l) => l.includes('QA experience'))).toBe(true);
+    expect(labels.some((l) => l.includes('Playwright'))).toBe(true);
+    // Nav/filter chrome outside shadow must not leak in
+    expect(labels.some((l) => l.toLowerCase().includes('search jobs'))).toBe(false);
+  });
+
+  it('shadow: generic host with open shadowRoot is also pierced (not just #interop-outlet)', () => {
+    const doc = dom(`<html><body><div id="my-host"></div></body></html>`);
+    const host = doc.getElementById('my-host') as unknown as { attachShadow: (o: { mode: string }) => ShadowRoot };
+    const sr = host.attachShadow({ mode: 'open' }) as unknown as { innerHTML: string };
+    sr.innerHTML = `
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <label for="q1">Why do you want this role?</label>
+          <textarea id="q1" name="motivation"></textarea>
+        </form>
+      </div>
+    `;
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toBe('Why do you want this role?');
+  });
+
+  it('shadow: cover-letter carve-out still holds inside shadow (alone excluded, co-located included)', () => {
+    const alone = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <label for="cover">Cover letter</label>
+          <textarea id="cover" name="coverLetter"></textarea>
+        </form>
+      </div>
+    `);
+    expect(extractLinkedInQuestions(alone).questions).toHaveLength(0);
+
+    const colocated = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <label for="q1">Why do you want this role?</label>
+          <textarea id="q1"></textarea>
+          <label for="cover">Cover letter</label>
+          <textarea id="cover"></textarea>
+        </form>
+      </div>
+    `);
+    const res2 = extractLinkedInQuestions(colocated);
+    expect(res2.questions.some((q) => q.label.toLowerCase().includes('cover letter'))).toBe(true);
+    expect(res2.questions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shadow: contact-info step inside shadow is still skipped', () => {
+    const doc = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <label for="phone">Mobile phone number</label><input id="phone" type="tel" />
+          <label for="email">Email address</label><input id="email" type="email" />
+        </form>
+      </div>
+    `);
+    expect(extractLinkedInQuestions(doc).questions).toHaveLength(0);
+  });
+
+  // Regression: real Contact Info step doublings — container textContent concatenates
+  // two identical label nodes without separator (e.g. "Email addressEmail address")
+  // from LinkedIn's artdeco markup; previously classified as employer question because
+  // doubled string length >=12 triggered hasEmployerQuestionSignal.
+  it('regression: doubled-label Contact Info step does not become Additional Questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <!-- LinkedIn can render label text twice in container textContent -->
+              <div>Email addressEmail address</div>
+              <input name="email" type="text" />
+            </div>
+          </div>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>Mobile phone numberMobile phone number</div>
+              <input name="phone" type="text" />
+            </div>
+          </div>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>CityCity</div>
+              <input name="city" type="text" />
+            </div>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('regression: doubled-label Contact Info inside shadow is still skipped', () => {
+    const doc = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>Email addressEmail address</div>
+              <input name="email" type="text" />
+            </div>
+          </div>
+          <label for="phone">Mobile phone number</label><input id="phone" type="tel" />
+        </form>
+      </div>
+    `);
+    expect(extractLinkedInQuestions(doc).questions).toHaveLength(0);
+  });
+
+  // Regression: Documents / resume-picker step — LinkedIn shows resume selection UI
+  // with long labels like "Select a resume" or file names containing .pdf.
+  // Previously misclassified as Additional Questions because label length >=12.
+  it('regression: Documents resume-picker step is not Additional Questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Documents</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="resume">Select a resume *</label>
+            <select id="resume" name="resume"><option>Resume - John Doe.pdf</option></select>
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="resume2">Resume</label>
+            <input id="resume2" name="resume" type="text" value="MyResume.pdf" />
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('regression: resume-picker inside shadow is still skipped', () => {
+    const doc = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Resume</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label>Resume *</label>
+            <select name="resume"><option>John Doe Resume.pdf</option></select>
+          </div>
+        </form>
+      </div>
+    `);
+    expect(extractLinkedInQuestions(doc).questions).toHaveLength(0);
+  });
+
+  it('regression: resume fields are never surfaced even if step header is Additional Questions but only resume signal present', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <!-- Edge: malformed step where only resume picker appears but header says Additional Questions — still filtered -->
+          <label for="r">Select resume</label>
+          <input id="r" name="resume" type="text" />
+        </form>
+      </div>
+    `);
+    // Header would normally pass isAdditionalQuestionsStep, but hasEmployerQuestionSignal
+    // should now reject resume-only content, so whole step yields 0.
+    // If it did pass, the loop filter would still drop the resume field, yielding 0.
+    const res = extractLinkedInQuestions(doc);
+    // Either outcome is 0 — the key invariant is resume not surfaced as question.
+    expect(res.questions).toHaveLength(0);
   });
 });

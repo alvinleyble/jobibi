@@ -36,11 +36,7 @@ function QuestionRow({
           {confidenceLabel(q.confidence)} · {q.confidence.toFixed(2)}
         </span>
       </div>
-      <div className="flex flex-wrap gap-1 text-[10px] text-slate-500">
-        <span className="rounded bg-slate-100 px-1 py-0.5">{q.fieldType}</span>
-        <span className="rounded bg-slate-100 px-1 py-0.5">{q.field.selector}</span>
-        <span className="rounded bg-slate-100 px-1 py-0.5">{q.labelSource}</span>
-      </div>
+
       {q.context && q.context !== q.label ? (
         <span className="text-[10px] italic text-slate-400">Context: {q.context}</span>
       ) : null}

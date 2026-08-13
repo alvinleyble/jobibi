@@ -6,7 +6,7 @@ Not an auto-applier. Jobibi is an *editor of your best self*: the human always r
 
 For each question it does one of three things — drafts an answer, asks you one short question when it has a good story but not the right angle, or declines when it has nothing relevant. Which one is chosen by code, not by the model.
 
-**Status:** Phase 2 complete — S7A shipped on `fm/jobibi-sensitive-storage-gate-s7a` (sensitive storage gate + refuse-card manual-input). See [docs/build/project-build-progress.md](docs/build/project-build-progress.md) for the authoritative build state.
+**Status:** Phase 2 complete — S7B shipped on `fm/jobibi-s7b-linkedin-detection-scoping` (LinkedIn Easy Apply detection scoping — dialog-only, Additional Questions step only, cover-letter co-location). See [docs/build/project-build-progress.md](docs/build/project-build-progress.md) for the authoritative build state.
 
 ## Documentation
 
