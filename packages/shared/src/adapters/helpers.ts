@@ -1,4 +1,4 @@
-import type { ExtractedQuestion, FieldType, JobContext, LabelSource } from './types.ts';
+import type { FieldType, LabelSource } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Confidence table (D16) — shared across all adapters.
