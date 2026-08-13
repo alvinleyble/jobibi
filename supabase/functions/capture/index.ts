@@ -226,12 +226,8 @@ Deno.serve(async (req) => {
           }
         }
       } catch (e) {
-        console.warn('[capture] sensitive check error', e);
-        // fail-closed: treat error as sensitive to avoid raw storage of potential sensitive data?
-        // For capture batch, fail-open would leak; but to avoid losing non-sensitive batch on transient error, fail-open with warning and proceed.
-        // However S7A spec says reject-and-redirect, not silent refile — transient DB errors in facts fetch already handled above.
-        // Here detection error is in-memory, proceed without block.
-        sensitiveHit = null;
+        console.error('[capture] sensitive check error (fail-closed)', e);
+        sensitiveHit = { isSensitive: true, kind: null, via: null, ruleHit: null, retrievalHit: null, fact: null };
       }
       if (sensitiveHit?.isSensitive) {
         droppedSensitive++;
