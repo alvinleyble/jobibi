@@ -19,6 +19,11 @@ import {
 // S7C: scoped to smartapply.indeed.com questions-module step(s) only.
 // ---------------------------------------------------------------------------
 
+// URL pattern /beta/indeedapply/form/questions-module/questions/N
+// N increments across multi-page flows — match any digit sequence.
+// Exported so the content script can reuse it instead of duplicating it.
+export const INDEED_QUESTIONS_MODULE_PATH_RE = /\/beta\/indeedapply\/form\/questions-module\/questions\/\d+/;
+
 function isIndeedQuestionsModuleStep(root: ParentNode): boolean {
   const loc = (root as unknown as Document).location as unknown as
     | { href?: string; hostname?: string; pathname?: string }
@@ -34,10 +39,7 @@ function isIndeedQuestionsModuleStep(root: ParentNode): boolean {
   // Real employer questions live only on smartapply.indeed.com
   if (!hostname.includes('smartapply')) return false;
 
-  // URL pattern /beta/indeedapply/form/questions-module/questions/N
-  // N increments across multi-page flows — match any digit sequence.
-  const questionsModuleRe = /\/beta\/indeedapply\/form\/questions-module\/questions\/\d+/;
-  if (!questionsModuleRe.test(pathname)) return false;
+  if (!INDEED_QUESTIONS_MODULE_PATH_RE.test(pathname)) return false;
 
   return true;
 }

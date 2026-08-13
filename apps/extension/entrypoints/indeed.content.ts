@@ -1,4 +1,4 @@
-import { extractIndeedQuestions, verifySingleMapping } from '@jobibi/shared';
+import { extractIndeedQuestions, verifySingleMapping, INDEED_QUESTIONS_MODULE_PATH_RE } from '@jobibi/shared';
 import type { ExtractionResult, ExtractedQuestion } from '@jobibi/shared';
 
 export default defineContentScript({
@@ -28,7 +28,7 @@ export default defineContentScript({
     function maybeLogExtractionFailure(result: ExtractionResult) {
       // S7C: only expect questions on questions-module step(s); don't flag
       // homepage/search or resume-selection-module as failures.
-      const isQuestionsModule = location.hostname.includes('smartapply') && /\/beta\/indeedapply\/form\/questions-module\/questions\/\d+/.test(location.pathname);
+      const isQuestionsModule = location.hostname.includes('smartapply') && INDEED_QUESTIONS_MODULE_PATH_RE.test(location.pathname);
       if (!isQuestionsModule) return;
       const formPresent = !!document.querySelector('form, .ia-Questions, [data-testid="application-form"]');
       const hasFields = !!document.querySelector('form textarea, form input[type="text"], form select');
