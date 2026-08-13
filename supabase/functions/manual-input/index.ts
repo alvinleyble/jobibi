@@ -208,16 +208,43 @@ Deno.serve(async (req) => {
         };
         const { data: memRow, error: memErr } = await supabase.from('memory_chunks').insert(memPayload).select('id').single();
         if (memErr) {
+          let recovered = false;
           if (memEmb) {
-            const { data: memRow2 } = await supabase.from('memory_chunks').insert({ ...memPayload, embedding: null }).select('id').single();
-            if (memRow2) memoryChunkId = (memRow2 as { id: string }).id;
+            const { data: memRow2, error: memErr2 } = await supabase.from('memory_chunks').insert({ ...memPayload, embedding: null }).select('id').single();
+            if (memRow2) {
+              memoryChunkId = (memRow2 as { id: string }).id;
+              recovered = true;
+            } else {
+              console.error('[manual-input] memory_chunks insert failed (after retry)', memErr2 ?? memErr);
+            }
+          } else {
+            console.error('[manual-input] memory_chunks insert failed', memErr);
+          }
+          if (!recovered) {
+            return jsonResponse(
+              { error: `Answer saved but not yet searchable — memory storage failed: ${memErr.message ?? 'unknown'}. Please retry.` },
+              500,
+            );
           }
         } else if (memRow) {
           memoryChunkId = (memRow as { id: string }).id;
+        } else {
+          console.error('[manual-input] memory_chunks insert returned no row and no error');
+          return jsonResponse(
+            { error: 'Answer saved but not yet searchable — memory storage returned no id. Please retry.' },
+            500,
+          );
         }
       } catch (e) {
-        console.warn('[manual-input] memory_chunks insert failed', e);
+        console.error('[manual-input] memory_chunks insert failed', e);
+        return jsonResponse(
+          { error: `Answer saved but not yet searchable — memory storage failed: ${String(e)}. Please retry.` },
+          500,
+        );
       }
+    } else {
+      // answer too short to chunk — still a success, qa_pairs already persisted
+      console.warn('[manual-input] answer too short to chunk, skipping memory_chunks', { len: trimmedAnswer.length });
     }
 
     return jsonResponse(
