@@ -160,8 +160,26 @@ export default function JobStreetQuestions() {
                 },
               });
               if (error) {
-                const msg = (error as unknown as { message?: string }).message ?? String(error);
-                setCaptureMsg(`Capture failed: ${msg}`);
+                let body: { message?: string; error?: unknown; droppedSensitive?: number } | null = null;
+                try {
+                  const ctx = (error as unknown as { context?: { json: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } } }).context;
+                  if (ctx?.json) {
+                    try {
+                      body = (await ctx.json()) as typeof body;
+                    } catch {
+                      try {
+                        body = (await ctx.clone?.()?.json()) as typeof body;
+                      } catch {}
+                    }
+                  }
+                } catch {}
+                const raw = body?.message ?? (typeof body?.error === 'string' ? body.error : null);
+                const msg = raw ?? (error as unknown as { message?: string }).message ?? String(error);
+                if (body?.droppedSensitive) {
+                  setCaptureMsg(`Capture failed: ${msg} · ${body.droppedSensitive} not saved — please retry.`);
+                } else {
+                  setCaptureMsg(`Capture failed: ${msg}`);
+                }
                 setTimeout(() => setCaptureMsg(null), 4000);
               } else if (data) {
                 const inserted = (data as { inserted?: number }).inserted ?? 0;

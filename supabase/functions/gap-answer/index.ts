@@ -75,12 +75,13 @@ Deno.serve(async (req) => {
     // Check answer + question texts against typed sensitive_facts before any insert.
     // On hit, return 409 with confirm payload so UI can route to sensitive-confirm.
     try {
-      const { data: factRows } = await supabase
+      const { data: factRows, error: factErr } = await supabase
         .from('sensitive_facts')
         .select('id, kind, value, stated_at, confirmed_at, source_application_id')
         .eq('user_id', user.id)
         .order('stated_at', { ascending: false })
         .limit(50);
+      if (factErr) throw factErr;
       const typedFacts = ((factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? []).map((r) => ({
         id: r.id,
         kind: r.kind as import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact['kind'],
