@@ -122,27 +122,59 @@ Deno.serve(async (req) => {
       }
     }
 
-    // S7A: fetch sensitive facts once for storage gate
+    // S7A: fetch sensitive facts once for storage gate — option C: retry once then fail-closed (captain 2026-08-13)
     let typedFacts: import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact[] = [];
-    try {
-      const { data: factRows } = await supabase
-        .from('sensitive_facts')
-        .select('id, kind, value, stated_at, confirmed_at, source_application_id')
-        .eq('user_id', user.id)
-        .order('stated_at', { ascending: false })
-        .limit(50);
-      const rows = (factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? [];
-      typedFacts = rows.map((r) => ({
-        id: r.id,
-        kind: r.kind as import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact['kind'],
-        value: r.value,
-        stated_at: r.stated_at,
-        confirmed_at: r.confirmed_at,
-        source_application_id: r.source_application_id,
-      }));
-    } catch (e) {
-      console.warn('[capture] sensitive facts fetch failed', e);
-      typedFacts = [];
+    let sensitiveFetchFailed = false;
+    {
+      let lastError: unknown = null;
+      let success = false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const { data: factRows, error: factErr } = await supabase
+            .from('sensitive_facts')
+            .select('id, kind, value, stated_at, confirmed_at, source_application_id')
+            .eq('user_id', user.id)
+            .order('stated_at', { ascending: false })
+            .limit(50);
+          if (factErr) throw factErr;
+          const rows = (factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? [];
+          typedFacts = rows.map((r) => ({
+            id: r.id,
+            kind: r.kind as import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact['kind'],
+            value: r.value,
+            stated_at: r.stated_at,
+            confirmed_at: r.confirmed_at,
+            source_application_id: r.source_application_id,
+          }));
+          success = true;
+          lastError = null;
+          break;
+        } catch (e) {
+          lastError = e;
+          if (attempt === 0) console.warn('[capture] sensitive facts fetch failed, retrying', e);
+          else console.error('[capture] sensitive facts fetch failed after retry (fail-closed)', e);
+        }
+      }
+      if (!success) {
+        sensitiveFetchFailed = true;
+        console.error('[capture] fail-closed after retry, dropping capture batch', lastError);
+      }
+    }
+    if (sensitiveFetchFailed) {
+      return jsonResponse(
+        {
+          error: 'sensitive_detected',
+          code: 'sensitive_rejected',
+          message: 'Could not verify sensitivity — capture aborted, please retry.',
+          sensitiveKind: null,
+          sensitiveVia: null,
+          sensitiveFact: null,
+          inserted: 0,
+          droppedSensitive: answers.length,
+          droppedMismatched: 0,
+        },
+        409,
+      );
     }
 
     const inserted: string[] = [];
