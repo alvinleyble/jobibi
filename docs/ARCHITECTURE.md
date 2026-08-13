@@ -54,7 +54,7 @@ What happens when the user opens an application page:
 
 5. **Retrieve** — hybrid search over `memory_chunks` for the top-k relevant pieces of history.
 
-6. **Sensitive check** — runs *before* any drafting. Two independent signals, and either one firing routes the question to the always-confirm path: keyword and field-type rules, and retrieval matching the question against the user's typed `sensitive_facts` entries. Union, not intersection — an unnecessary confirmation card costs one click, a miss puts a wrong salary figure into a real application. Because the four core facts are seeded at install, the retrieval signal works from the first session. Always-confirm means no drafting and no Auto-Fill, ever, at any tier.
+6. **Sensitive check** — runs *before* any drafting (and — since S7A — again before every later insert of user-typed text; see *Guard against sensitive text landing in ordinary memory* below). Two independent signals, and either one firing routes the question to the always-confirm path: keyword and field-type rules, and retrieval matching the question against the user's typed `sensitive_facts` entries. Union, not intersection — an unnecessary confirmation card costs one click, a miss puts a wrong salary figure into a real application. Because the four core facts are seeded at install, the retrieval signal works from the first session. Always-confirm means no drafting and no Auto-Fill, ever, at any tier.
 
 7. **The gate** — deterministic code scores two axes and picks one of three outcomes:
 

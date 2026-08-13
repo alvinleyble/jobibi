@@ -6,7 +6,7 @@ Not an auto-applier. Jobibi is an *editor of your best self*: the human always r
 
 For each question it does one of three things — drafts an answer, asks you one short question when it has a good story but not the right angle, or declines when it has nothing relevant. Which one is chosen by code, not by the model.
 
-**Status:** pre-build. Documentation drafted 2026-08-09 and revised the same day following a design grill; 18 decisions recorded. No code yet.
+**Status:** Phase 2 complete — S7A shipped on `fm/jobibi-sensitive-storage-gate-s7a` (sensitive storage gate + refuse-card manual-input). See [docs/build/project-build-progress.md](docs/build/project-build-progress.md) for the authoritative build state.
 
 ## Documentation
 
@@ -16,5 +16,5 @@ For each question it does one of three things — drafts an answer, asks you one
 | [docs/PRODUCT.md](docs/PRODUCT.md) | Vision, problem, market, feature set, trust stance |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Stack, system design, data model, pipeline, costs |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Decision log — accepted decisions and open questions |
-| [docs/build/v0.1.md](docs/build/v0.1.md) | First build plan (draft, not yet authorized) |
+| [docs/build/v0.1.md](docs/build/v0.1.md) | Authorized build plan (see project-build-progress.md for current state) |
 | [docs/build/project-build-progress.md](docs/build/project-build-progress.md) | Single source of truth for current state |

@@ -160,20 +160,22 @@ export default function JobStreetQuestions() {
                 },
               });
               if (error) {
-                let body: { message?: string; error?: unknown; droppedSensitive?: number } | null = null;
+                type CaptureErrorBody = { message?: string; error?: unknown; droppedSensitive?: number };
+                let body: CaptureErrorBody | null = null;
                 try {
                   const ctx = (error as unknown as { context?: { json: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } } }).context;
                   if (ctx?.json) {
                     try {
-                      body = (await ctx.json()) as typeof body;
+                      body = (await ctx.json()) as CaptureErrorBody | null;
                     } catch {
                       try {
-                        body = (await ctx.clone?.()?.json()) as typeof body;
+                        body = (await ctx.clone?.()?.json()) as CaptureErrorBody | null;
                       } catch {}
                     }
                   }
                 } catch {}
-                const raw = body?.message ?? (typeof body?.error === 'string' ? body.error : null);
+                const bodyError = body?.error;
+                const raw = body?.message ?? (typeof bodyError === 'string' ? bodyError : null);
                 const msg = raw ?? (error as unknown as { message?: string }).message ?? String(error);
                 if (body?.droppedSensitive) {
                   setCaptureMsg(`Capture failed: ${msg} · ${body.droppedSensitive} not saved — please retry.`);
