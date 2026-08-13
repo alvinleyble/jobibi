@@ -23,6 +23,10 @@ export type {
   MappingConfidence,
 } from './adapters/types.ts';
 export { extractJobStreetQuestions } from './adapters/jobstreet.ts';
+export { extractLinkedInQuestions } from './adapters/linkedin.ts';
+export { extractIndeedQuestions } from './adapters/indeed.ts';
+export { extractGenericQuestions } from './adapters/generic.ts';
+export { CONFIDENCE_BY_SOURCE, FIELD_SELECTOR } from './adapters/helpers.ts';
 
 // Capture helpers (S6) — lightweight, safe for extension bundle
 export {

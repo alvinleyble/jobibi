@@ -89,6 +89,30 @@ export default function JobStreetQuestions() {
           const payload = (message as { payload: ExtractionResult }).payload;
           setResult(payload);
           setNoListenerYet(false);
+        } else if (t === 'JOBIBI_EXTRACTION_FAILURE') {
+          const payload = (message as { payload: { adapter: string; host: string; url: string; detected_fields: number; extracted_questions: number; failure_reason: string } }).payload;
+          // S7 extraction-failure telemetry: write under caller's JWT (mirrors gate_decisions pattern)
+          void (async () => {
+            try {
+              const {
+                data: { user },
+              } = await supabase.auth.getUser();
+              if (!user) return;
+              const urlHash = payload.url ? btoa(payload.url).slice(0, 32) : null;
+              await supabase.from('extraction_failures').insert({
+                user_id: user.id,
+                adapter: payload.adapter,
+                host: payload.host,
+                url: payload.url,
+                url_hash: urlHash,
+                detected_fields: payload.detected_fields,
+                extracted_questions: payload.extracted_questions,
+                failure_reason: payload.failure_reason,
+              });
+            } catch {
+              // telemetry best-effort; ignore
+            }
+          })();
         } else if (t === 'JOBIBI_CAPTURE') {
           const payload = (message as { payload: {
             answers: Array<{ questionLabel: string; answerText: string; draftText: string | null; fieldSelector: string; fieldId: string; mappingVerified: boolean; mismatchReason?: string }>;
@@ -163,12 +187,29 @@ export default function JobStreetQuestions() {
         const tab = tabs[0];
         const tabId = tab?.id;
         const url = tab?.url ?? '';
+        const isSupportedHost = /jobstreet|seek|jobsdb|linkedin|indeed/i.test(url);
         const isApplyPage = /jobstreet|seek|jobsdb/i.test(url) && /apply/i.test(url);
-        // Non-apply pages (e.g. homepage) have no content script — clear immediately
-        // instead of showing stale questions from the previous tab.
-        if (!isApplyPage) {
-          // Still try to ask — if a generic S7 adapter is present it may answer —
-          // but clear on no response.
+        const isLinkedIn = /linkedin/i.test(url);
+        const isIndeed = /indeed/i.test(url);
+        // Dedicated apply pages have strict scoping; LinkedIn/Indeed/generic are broader.
+        // For JobStreet we keep the previous apply-only gate; others try immediately.
+        if (!isSupportedHost) {
+          // Unknown host — try generic fallback
+          if (tabId != null) {
+            const resp = (await browser.tabs
+              .sendMessage(tabId, { type: 'JOBIBI_REQUEST_QUESTIONS' })
+              .catch(() => null)) as { payload?: ExtractionResult } | null;
+            if (resp?.payload && resp.payload.questions.length > 0) {
+              setResult(resp.payload);
+              setNoListenerYet(false);
+              return;
+            }
+          }
+          setResult(null);
+          setNoListenerYet(true);
+          return;
+        }
+        if (!isApplyPage && !isLinkedIn && !isIndeed) {
           if (tabId != null) {
             const resp = (await browser.tabs
               .sendMessage(tabId, { type: 'JOBIBI_REQUEST_QUESTIONS' })
@@ -253,16 +294,18 @@ export default function JobStreetQuestions() {
       {questions.length === 0 ? (
         <p className="text-xs text-slate-500">
           {result
-            ? 'No questions detected on this page.'
+            ? `No questions detected on this page${result.host ? ` · ${result.host}` : ''}${result.adapter ? ` (${result.adapter})` : ''}.`
             : noListenerYet
-              ? 'Open a JobStreet application to see its questions here.'
-              : 'Waiting for JobStreet…'}
+              ? 'Open a supported application (JobStreet, LinkedIn Easy Apply, Indeed) to see its questions here.'
+              : 'Waiting for application…'}
         </p>
       ) : (
         <>
           <p className="text-[11px] text-slate-500">
             {questions.length} question{questions.length === 1 ? '' : 's'} detected
             {result?.host ? ` · ${result.host}` : ''}
+            {result?.adapter ? ` · ${result.adapter}` : ''}
+            {result?.jobContext?.jobDescription ? ' · JD captured' : ''}
           </p>
           <ul className="flex flex-col gap-1.5">
             {questions.map((q) => (

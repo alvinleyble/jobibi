@@ -52,10 +52,12 @@ export interface ExtractedQuestion {
   skipped?: boolean;
 }
 
-/** Job context picked from the page (role + company). */
+/** Job context picked from the page (role + company). D11: JD text opportunistically when present in DOM. */
 export interface JobContext {
   roleTitle?: string;
   company?: string;
+  /** Full job description text when already present in DOM (e.g. LinkedIn behind modal). Optional per D11. */
+  jobDescription?: string;
 }
 
 /** Full extraction result from one page scan. */
@@ -64,4 +66,6 @@ export interface ExtractionResult {
   jobContext: JobContext;
   /** Host that was scanned (for debugging). */
   host: string;
+  /** Which adapter produced this result (for telemetry). */
+  adapter?: string;
 }
