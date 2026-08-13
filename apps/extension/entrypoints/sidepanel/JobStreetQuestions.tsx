@@ -160,15 +160,43 @@ export default function JobStreetQuestions() {
                 },
               });
               if (error) {
-                const msg = (error as unknown as { message?: string }).message ?? String(error);
-                setCaptureMsg(`Capture failed: ${msg}`);
+                type CaptureErrorBody = { message?: string; error?: unknown; droppedSensitive?: number };
+                let body: CaptureErrorBody | null = null;
+                try {
+                  const ctx = (error as unknown as { context?: { json: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } } }).context;
+                  if (ctx?.json) {
+                    try {
+                      body = (await ctx.json()) as CaptureErrorBody | null;
+                    } catch {
+                      try {
+                        body = (await ctx.clone?.()?.json()) as CaptureErrorBody | null;
+                      } catch {}
+                    }
+                  }
+                } catch {}
+                const bodyError = body?.error;
+                const raw = body?.message ?? (typeof bodyError === 'string' ? bodyError : null);
+                const msg = raw ?? (error as unknown as { message?: string }).message ?? String(error);
+                if (body?.droppedSensitive) {
+                  setCaptureMsg(`Capture failed: ${msg} · ${body.droppedSensitive} not saved — please retry.`);
+                } else {
+                  setCaptureMsg(`Capture failed: ${msg}`);
+                }
                 setTimeout(() => setCaptureMsg(null), 4000);
               } else if (data) {
                 const inserted = (data as { inserted?: number }).inserted ?? 0;
                 const dropped = (data as { droppedMismatched?: number }).droppedMismatched ?? 0;
-                if (inserted || dropped) {
-                  setCaptureMsg(`Capture: ${inserted} saved${dropped ? `, ${dropped} mismatched dropped` : ''}`);
-                  setTimeout(() => setCaptureMsg(null), 3000);
+                const droppedSensitive = (data as { droppedSensitive?: number }).droppedSensitive ?? 0;
+                const sensitiveRejections = (data as { sensitiveRejections?: Array<{ questionLabel: string; sensitiveKind: string | null }> }).sensitiveRejections ?? [];
+                if (inserted || dropped || droppedSensitive) {
+                  const parts = [`Capture: ${inserted} saved`];
+                  if (dropped) parts.push(`${dropped} mismatched dropped`);
+                  if (droppedSensitive) {
+                    const kinds = sensitiveRejections.map((r) => r.sensitiveKind).filter(Boolean).join(', ') || 'sensitive';
+                    parts.push(`${droppedSensitive} sensitive not saved — confirm via intake/sensitive card (${kinds})`);
+                  }
+                  setCaptureMsg(parts.join(' · '));
+                  setTimeout(() => setCaptureMsg(null), 4000);
                 }
               }
             } catch (e) {

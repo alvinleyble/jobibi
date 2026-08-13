@@ -14,7 +14,7 @@ flowchart LR
         AUTH["Auth"]
         DB["Postgres + pgvector<br/>row-level security"]
         STG["Storage<br/>resume/cover letter files"]
-        EF["Edge Functions<br/>suggest · ingest · capture · grill · export<br/>(embeddings run in-process)"]
+        EF["Edge Functions<br/>suggest · ingest · capture · gap-answer ·<br/>sensitive-confirm · manual-input · grill · export<br/>(embeddings run in-process)"]
     end
     LLM["OpenAI GPT-5.6 Luna<br/>key lives server-side only"]
 
@@ -54,7 +54,7 @@ What happens when the user opens an application page:
 
 5. **Retrieve** — hybrid search over `memory_chunks` for the top-k relevant pieces of history.
 
-6. **Sensitive check** — runs *before* any drafting. Two independent signals, and either one firing routes the question to the always-confirm path: keyword and field-type rules, and retrieval matching the question against the user's typed `sensitive_facts` entries. Union, not intersection — an unnecessary confirmation card costs one click, a miss puts a wrong salary figure into a real application. Because the four core facts are seeded at install, the retrieval signal works from the first session. Always-confirm means no drafting and no Auto-Fill, ever, at any tier.
+6. **Sensitive check** — runs *before* any drafting (and — since S7A — again before every later insert of user-typed text; see *Guard against sensitive text landing in ordinary memory* below). Two independent signals, and either one firing routes the question to the always-confirm path: keyword and field-type rules, and retrieval matching the question against the user's typed `sensitive_facts` entries. Union, not intersection — an unnecessary confirmation card costs one click, a miss puts a wrong salary figure into a real application. Because the four core facts are seeded at install, the retrieval signal works from the first session. Always-confirm means no drafting and no Auto-Fill, ever, at any tier.
 
 7. **The gate** — deterministic code scores two axes and picks one of three outcomes:
 
@@ -125,6 +125,8 @@ So the content script keeps watching the fields it already mapped and reads thei
 **Scope of what is read:** every field the adapter identified as an application question, including ones Jobibi didn't help with. This is deliberate. If capture were limited to fields Jobibi drafted, every refusal would be a permanent dead end — the same question refused forever, with the user's own good answer discarded. Those self-written answers are also the purest voice material in the product. Fields never identified as questions (IDs, addresses, uploads) are never read.
 
 **Guard against silent corruption.** A broken adapter that mis-binds question #3's label to question #7's textarea produces a panel that looks entirely correct while writing the wrong answer against the wrong question — corrupting memory permanently and invisibly. So the mapping is **independently re-derived at capture time** and compared against the mapping used when the suggestion was made. Agreement writes; disagreement drops the write and logs it. Extraction failures are cheap and self-announcing; mis-mapping is expensive and self-concealing, and the design pushes failure toward the cheap kind. The same confidence signal gates Auto-Fill, which degrades to read-only rather than typing into a field it isn't sure about.
+
+**Guard against sensitive text landing in ordinary memory.** The sensitive check (step 6) is not only a pre-drafting gate — it also runs immediately before every insert of user-typed text, in `gap-answer`, `capture`, and the refuse-card's manual-input path alike. A hit rejects that write outright and routes the user to the sensitive-confirm card; the value is never silently reclassified into `sensitive_facts` in the background, so it only ever enters that table through the one confirm/update screen (D17).
 
 ## Memory growth and the style profile
 

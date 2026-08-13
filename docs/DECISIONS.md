@@ -149,6 +149,7 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 
 **Decision:** Two independent signals — keyword/field-type rules, and retrieval matching the question against the user's typed `sensitive_facts` — and **either** one firing routes to always-confirm. A model classification may be added as a third net; it can add caution but never remove it.
 **Why:** keyword matching alone has false negatives on a long tail ("What compensation range are you targeting?"), and a miss means a wrong salary figure typed into a real application. The cost asymmetry is extreme: a false positive is one extra click. Because the four core facts are seeded at install (D18), the retrieval signal works from the first session.
+**S7A extension (2026-08-13):** the same gate now also runs at storage time, before every insert of user-typed text (`gap-answer`, `capture`, and the refuse card's manual-input path) — not only ahead of drafting. Rejected alternative: silently reclassify a flagged sentence into `sensitive_facts` in the background; rejected because it writes into the typed-fact table without the user ever confirming the value, defeating the point of the confirm/update lifecycle. Instead the insert is rejected and the user is routed to the existing sensitive-confirm card, so a value only ever enters `sensitive_facts` through that one screen.
 
 ## D18 — Cold start: front-load facts, fold stories into the first application — **accepted** (2026-08-09)
 
