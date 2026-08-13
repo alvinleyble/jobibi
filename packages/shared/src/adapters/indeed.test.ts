@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { extractIndeedQuestions } from './indeed.ts';
 
-function dom(html: string) {
-  const jsdom = new JSDOM(html);
+function dom(html: string, url?: string) {
+  const jsdom = new JSDOM(html, url ? { url } : undefined);
   return jsdom.window.document;
 }
+
+const QUESTIONS_MODULE_URL = 'https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/1';
+const QUESTIONS_MODULE_URL_PAGE_2 = 'https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/2';
+const HOMEPAGE_URL = 'https://www.indeed.com/jobs?q=engineer';
+const RESUME_SELECTION_URL = 'https://smartapply.indeed.com/beta/indeedapply/form/resume-selection-module';
 
 const _css = (globalThis as unknown as { CSS?: { escape?: (s: string) => string } }).CSS;
 if (!_css?.escape) {
@@ -175,5 +180,92 @@ describe('extractIndeedQuestions', () => {
     const res = extractIndeedQuestions(doc);
     expect(res.questions).toHaveLength(2);
     expect(res.questions.map((q) => q.fieldType)).toEqual(['select', 'text']);
+  });
+
+  it('S7C: extracts questions on smartapply questions-module step', () => {
+    const doc = dom(
+      `
+      <form data-testid="application-form">
+        <label for="q1">Why do you want this role?</label>
+        <textarea id="q1" name="motivation"></textarea>
+      </form>
+    `,
+      QUESTIONS_MODULE_URL,
+    );
+    const res = extractIndeedQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+  });
+
+  it('S7C: extracts questions on a later multi-page questions-module step', () => {
+    const doc = dom(
+      `
+      <form data-testid="application-form">
+        <label for="q1">What is your notice period?</label>
+        <input id="q1" name="notice" type="text" />
+      </form>
+    `,
+      QUESTIONS_MODULE_URL_PAGE_2,
+    );
+    const res = extractIndeedQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+  });
+
+  it('S7C: excludes the homepage/search-results page', () => {
+    const doc = dom(
+      `
+      <form data-testid="application-form">
+        <label for="q1">Why do you want this role?</label>
+        <textarea id="q1" name="motivation"></textarea>
+      </form>
+    `,
+      HOMEPAGE_URL,
+    );
+    const res = extractIndeedQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('S7C: excludes the resume-selection-module page', () => {
+    const doc = dom(
+      `
+      <form data-testid="application-form">
+        <label for="q1">Why do you want this role?</label>
+        <textarea id="q1" name="motivation"></textarea>
+      </form>
+    `,
+      RESUME_SELECTION_URL,
+    );
+    const res = extractIndeedQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('S7C: excludes an unaccompanied cover letter field', () => {
+    const doc = dom(
+      `
+      <form data-testid="application-form">
+        <label for="cover">Cover letter</label>
+        <textarea id="cover" name="coverLetter"></textarea>
+      </form>
+    `,
+      QUESTIONS_MODULE_URL,
+    );
+    const res = extractIndeedQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('S7C: includes cover letter when co-located with an employer question', () => {
+    const doc = dom(
+      `
+      <form data-testid="application-form">
+        <label for="cover">Cover letter</label>
+        <textarea id="cover" name="coverLetter"></textarea>
+        <label for="q1">Why do you want this role?</label>
+        <textarea id="q1" name="motivation"></textarea>
+      </form>
+    `,
+      QUESTIONS_MODULE_URL,
+    );
+    const res = extractIndeedQuestions(doc);
+    expect(res.questions).toHaveLength(2);
+    expect(res.questions.some((q) => q.label === 'Cover letter')).toBe(true);
   });
 });

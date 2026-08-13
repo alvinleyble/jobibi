@@ -24,7 +24,7 @@ export type {
 } from './adapters/types.ts';
 export { extractJobStreetQuestions } from './adapters/jobstreet.ts';
 export { extractLinkedInQuestions } from './adapters/linkedin.ts';
-export { extractIndeedQuestions } from './adapters/indeed.ts';
+export { extractIndeedQuestions, INDEED_QUESTIONS_MODULE_PATH_RE } from './adapters/indeed.ts';
 export { extractGenericQuestions } from './adapters/generic.ts';
 export { CONFIDENCE_BY_SOURCE, FIELD_SELECTOR } from './adapters/helpers.ts';
 
