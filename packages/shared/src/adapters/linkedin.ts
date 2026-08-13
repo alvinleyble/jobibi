@@ -164,6 +164,46 @@ const CONTACT_INFO_EXACT = new Set([
   'home address',
 ]);
 
+// Helper: deduplicate doubled labels like "Email addressEmail address"
+// (can occur when container's textContent concatenates two identical label nodes
+// without a separator, or via cloned text). Also handles spaced double.
+function dedupeLabelText(txt: string): string {
+  const trimmed = txt.trim();
+  if (trimmed.length >= 2 && trimmed.length % 2 === 0) {
+    const half = trimmed.length / 2;
+    const a = trimmed.slice(0, half);
+    const b = trimmed.slice(half);
+    if (a.toLowerCase() === b.toLowerCase()) return a.trim();
+  }
+  const words = trimmed.split(/\s+/);
+  if (words.length >= 2 && words.length % 2 === 0) {
+    const halfW = words.length / 2;
+    const first = words.slice(0, halfW).join(' ');
+    const second = words.slice(halfW).join(' ');
+    if (first.toLowerCase() === second.toLowerCase()) return first.trim();
+  }
+  return trimmed;
+}
+
+function isContactInfoLabel(label: string): boolean {
+  const low = label.toLowerCase().trim();
+  if (CONTACT_INFO_EXACT.has(low)) return true;
+  const deduped = dedupeLabelText(label).toLowerCase().trim();
+  if (deduped !== low && CONTACT_INFO_EXACT.has(deduped)) return true;
+  return false;
+}
+
+function isResumePickerLabel(label: string, field: Element): boolean {
+  const low = label.toLowerCase();
+  if (low.includes('resume')) return true;
+  if (low.includes('.pdf')) return true;
+  const name = (field.getAttribute('name') || '').toLowerCase();
+  if (name.includes('resume')) return true;
+  const aria = (field.getAttribute('aria-label') || '').toLowerCase();
+  if (aria.includes('resume')) return true;
+  return false;
+}
+
 // LinkedIn-specific label resolution: wraps shared resolveLabel with extra
 // fallbacks for LinkedIn's artdeco/fb-dash markup where the question text lives
 // in a container's textContent rather than a <label for>.
@@ -184,9 +224,12 @@ function resolveLinkedInLabel(
     const clone = container.cloneNode(true) as HTMLElement;
     const toRemove = clone.querySelectorAll('input, select, textarea, button');
     toRemove.forEach((el) => el.remove());
-    const txt = cleanLabel(clone.textContent || '');
+    let txt = cleanLabel(clone.textContent || '');
+    // Fix doubling bug: container may contain two identical label nodes
+    // (e.g. "Email addressEmail address") — dedupe before any checks.
+    txt = dedupeLabelText(txt);
     if (txt.length >= 4 && txt.length <= 500) {
-      if (!CONTACT_INFO_EXACT.has(txt.toLowerCase().trim())) {
+      if (!isContactInfoLabel(txt)) {
         if (txt.includes('?') || txt.length >= 12) {
           return { label: txt, source: 'proximity' };
         }
@@ -219,8 +262,8 @@ function hasEmployerQuestionSignal(root: Element): boolean {
     const { label } = resolveLinkedInLabel(f as Element, root as unknown as ParentNode);
     if (!label) continue;
     if (isCoverLetterField(f as Element, label)) continue;
-    const low = label.toLowerCase().trim();
-    if (CONTACT_INFO_EXACT.has(low)) continue;
+    if (isContactInfoLabel(label)) continue;
+    if (isResumePickerLabel(label, f as Element)) continue;
     if (label.includes('?')) return true;
     if (label.length >= 12) return true;
   }
@@ -369,6 +412,10 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
     if (label.length > 500) continue;
     if (label.length > 220 && !label.trim().endsWith('?')) continue;
     if (label.length > 180 && !label.includes('?') && label.split(/\s+/).length > 25) continue;
+
+    // S7B: never surface contact-info or resume-picker fields as questions
+    if (isContactInfoLabel(label)) continue;
+    if (isResumePickerLabel(label, field)) continue;
 
     const fid = fieldId(field);
     if (seenIds.has(fid)) continue;

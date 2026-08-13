@@ -576,4 +576,114 @@ describe('extractLinkedInQuestions', () => {
     `);
     expect(extractLinkedInQuestions(doc).questions).toHaveLength(0);
   });
+
+  // Regression: real Contact Info step doublings — container textContent concatenates
+  // two identical label nodes without separator (e.g. "Email addressEmail address")
+  // from LinkedIn's artdeco markup; previously classified as employer question because
+  // doubled string length >=12 triggered hasEmployerQuestionSignal.
+  it('regression: doubled-label Contact Info step does not become Additional Questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <!-- LinkedIn can render label text twice in container textContent -->
+              <div>Email addressEmail address</div>
+              <input name="email" type="text" />
+            </div>
+          </div>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>Mobile phone numberMobile phone number</div>
+              <input name="phone" type="text" />
+            </div>
+          </div>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>CityCity</div>
+              <input name="city" type="text" />
+            </div>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('regression: doubled-label Contact Info inside shadow is still skipped', () => {
+    const doc = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>Email addressEmail address</div>
+              <input name="email" type="text" />
+            </div>
+          </div>
+          <label for="phone">Mobile phone number</label><input id="phone" type="tel" />
+        </form>
+      </div>
+    `);
+    expect(extractLinkedInQuestions(doc).questions).toHaveLength(0);
+  });
+
+  // Regression: Documents / resume-picker step — LinkedIn shows resume selection UI
+  // with long labels like "Select a resume" or file names containing .pdf.
+  // Previously misclassified as Additional Questions because label length >=12.
+  it('regression: Documents resume-picker step is not Additional Questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Documents</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="resume">Select a resume *</label>
+            <select id="resume" name="resume"><option>Resume - John Doe.pdf</option></select>
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="resume2">Resume</label>
+            <input id="resume2" name="resume" type="text" value="MyResume.pdf" />
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('regression: resume-picker inside shadow is still skipped', () => {
+    const doc = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Resume</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label>Resume *</label>
+            <select name="resume"><option>John Doe Resume.pdf</option></select>
+          </div>
+        </form>
+      </div>
+    `);
+    expect(extractLinkedInQuestions(doc).questions).toHaveLength(0);
+  });
+
+  it('regression: resume fields are never surfaced even if step header is Additional Questions but only resume signal present', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <!-- Edge: malformed step where only resume picker appears but header says Additional Questions — still filtered -->
+          <label for="r">Select resume</label>
+          <input id="r" name="resume" type="text" />
+        </form>
+      </div>
+    `);
+    // Header would normally pass isAdditionalQuestionsStep, but hasEmployerQuestionSignal
+    // should now reject resume-only content, so whole step yields 0.
+    // If it did pass, the loop filter would still drop the resume field, yielding 0.
+    const res = extractLinkedInQuestions(doc);
+    // Either outcome is 0 — the key invariant is resume not surfaced as question.
+    expect(res.questions).toHaveLength(0);
+  });
 });
