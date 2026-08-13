@@ -180,6 +180,7 @@ Deno.serve(async (req) => {
     const inserted: string[] = [];
     let droppedMismatched = 0;
     let droppedSensitive = 0;
+    let memoryChunksFailed = 0;
     const sensitiveRejections: Array<{ questionLabel: string; sensitiveKind: string | null; sensitiveVia: string | null; sensitiveFact: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null }> = [];
 
     for (const ans of answers) {
@@ -322,17 +323,24 @@ Deno.serve(async (req) => {
             text: `Q: ${qLabel}\nA: ${trimmedAnswer}`,
             embedding: memEmb ? JSON.stringify(memEmb) : null,
           };
-          const { error: memErr } = await supabase.from('memory_chunks').insert(memPayload);
+          const { data: memRow, error: memErr } = await supabase.from('memory_chunks').insert(memPayload).select('id').single();
           if (memErr) {
-            // retry without embedding
+            let recovered = false;
             if (memEmb) {
-              await supabase.from('memory_chunks').insert({ ...memPayload, embedding: null });
+              const { data: memRow2, error: memErr2 } = await supabase.from('memory_chunks').insert({ ...memPayload, embedding: null }).select('id').single();
+              if (!memErr2 && memRow2) recovered = true;
+              else console.error('[capture] memory_chunks insert failed (after retry)', memErr2 ?? memErr);
+            } else {
+              console.error('[capture] memory_chunks insert failed', memErr);
             }
+            if (!recovered) memoryChunksFailed++;
+          } else {
+            void memRow;
           }
-          // success: linked implicitly via text; no fk to qa_pairs needed
           void insertedId;
         } catch (e) {
-          console.warn('[capture] memory_chunks insert failed', e);
+          memoryChunksFailed++;
+          console.error('[capture] memory_chunks insert failed', e);
         }
       }
     }
@@ -344,6 +352,7 @@ Deno.serve(async (req) => {
       insertedIds: inserted,
       droppedMismatched,
       droppedSensitive,
+      memoryChunksFailed,
       sensitiveRejections,
       mismatchesLogged: mismatches?.length ?? 0,
     }, 200);
