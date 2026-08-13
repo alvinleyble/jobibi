@@ -128,8 +128,8 @@ describe('extractLinkedInQuestions', () => {
     const doc = dom(`
       <div class="jobs-easy-apply-modal">
         <form>
-          <label for="b">Cover letter</label>
-          <textarea id="b" name="cover"></textarea>
+          <label for="b">Why are you a good fit for this role?</label>
+          <textarea id="b" name="fit"></textarea>
         </form>
       </div>
     `);
@@ -212,5 +212,179 @@ describe('extractLinkedInQuestions', () => {
     `);
     const res = extractLinkedInQuestions(doc);
     expect(res.questions[0].label).toBe('Expected salary');
+  });
+
+  // S7B — detection scoping
+
+  it('scopes to Easy Apply dialog: nav/filter outside modal is ignored', () => {
+    const doc = dom(`
+      <html><body>
+        <nav>
+          <input name="search" placeholder="Search jobs" />
+          <label for="nav-filter">Filter by location</label>
+          <input id="nav-filter" name="filter" type="text" />
+        </nav>
+        <div class="jobs-search-results">
+          <input name="keyword" placeholder="Keyword filter" />
+        </div>
+        <div class="jobs-easy-apply-modal">
+          <form>
+            <label for="q1">Why do you want this role?</label>
+            <textarea id="q1" name="motivation"></textarea>
+          </form>
+        </div>
+      </body></html>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toBe('Why do you want this role?');
+  });
+
+  it('returns no questions when no Easy Apply dialog is present (search page only)', () => {
+    const doc = dom(`
+      <html><body>
+        <nav><input name="search" placeholder="Search" /></nav>
+        <div class="jobs-search-results">
+          <label for="kw">Keyword</label>
+          <input id="kw" name="keyword" type="text" />
+        </div>
+        <h1 class="jobs-unified-top-card__job-title">Backend Engineer</h1>
+      </body></html>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+    expect(res.jobContext.roleTitle).toBe('Backend Engineer');
+  });
+
+  it('skips contact-info step: phone/email/city fields alone produce no questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <label for="phone">Mobile phone number</label>
+          <input id="phone" name="phone" type="tel" />
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" />
+          <label for="city">City</label>
+          <input id="city" name="city" type="text" />
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('skips resume step: file input alone produces no questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Resume</h3>
+        <form>
+          <label for="resume">Upload resume</label>
+          <input id="resume" name="resume" type="file" />
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('skips review step: no fields or only summary produces no questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Review</h3>
+        <div>Please review your application</div>
+        <button>Submit application</button>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('detects only Additional Questions step: header plus employer questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <div class="fb-dash-form-element">
+          <label for="aq1">Have you completed the following level of education: Bachelor's Degree?</label>
+          <select id="aq1" name="education"><option>Yes</option><option>No</option></select>
+        </div>
+        <div class="fb-dash-form-element">
+          <label for="aq2">How many years of QA experience do you have?</label>
+          <input id="aq2" name="years" type="text" />
+        </div>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('cover-letter field alone is NOT detected (S8 carve-out)', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <label for="cover">Cover letter</label>
+          <textarea id="cover" name="coverLetter" placeholder="Write a cover letter"></textarea>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('cover-letter co-located with employer questions IS detected', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="q1">Why do you want to work at this company?</label>
+            <textarea id="q1" name="why"></textarea>
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="cover">Cover letter</label>
+            <textarea id="cover" name="coverLetter"></textarea>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    const cover = res.questions.find((q) => q.label.toLowerCase().includes('cover letter'));
+    expect(cover).toBeDefined();
+    expect(res.questions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('cover-letter co-located via presence signal without header still detected (same step)', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="q1">What is your greatest achievement?</label>
+            <textarea id="q1" name="achieve"></textarea>
+          </div>
+          <label for="cover2">Cover letter</label>
+          <textarea id="cover2" name="coverLetter2"></textarea>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    const cover = res.questions.find((q) => q.label.toLowerCase().includes('cover letter'));
+    expect(cover).toBeDefined();
+  });
+
+  it('detects employer question via modern fb-dash marker even without header', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <form>
+          <div class="fb-dash-form-element jobs-easy-apply-form-element">
+            <label for="fb1">Do you have a valid work permit for this location?</label>
+            <select id="fb1" name="permit"><option>Yes</option><option>No</option></select>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toContain('work permit');
   });
 });

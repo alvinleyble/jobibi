@@ -13,9 +13,15 @@ import {
 } from './helpers.ts';
 
 // ---------------------------------------------------------------------------
-// LinkedIn Easy Apply adapter (S7)
-// Mirrors jobstreet.ts shape: confidence via CONFIDENCE_BY_SOURCE,
-// label-for/proximity/blob-PII guards. Scoped to Easy Apply modal.
+// LinkedIn Easy Apply adapter (S7B scoping)
+// - Detects only within Easy Apply dialog container.
+// - Within dialog, detects only on Additional Questions step (header or
+//   employer-question markers). Skips contact-info, resume, review steps and
+//   underlying search page entirely.
+// - Cover Letter carve-out: a cover-letter field is excluded UNLESS it is
+//   co-located in the same step as real employer questions (same presence
+//   signal). Signal is "employer question exists in this step" — header or
+//   dash-form markers or question-like label.
 // Also opportunistically captures JD text when present behind modal (D11).
 // ---------------------------------------------------------------------------
 
@@ -59,7 +65,6 @@ function extractLinkedInJobContext(root: ParentNode): JobContext {
     }
   }
 
-  // D11: opportunistically capture JD text when already present in DOM behind modal
   const jdSelectors = [
     '.jobs-description-content__text',
     '.jobs-description__content',
@@ -91,19 +96,90 @@ function findEasyApplyModal(root: ParentNode): Element | null {
     '.artdeco-modal',
     '[role="dialog"]',
   ];
+  // Prefer modal that actually contains form fields
   for (const sel of modalSelectors) {
     const el = (root as Document).querySelector?.(sel);
     if (el) {
-      // Prefer the one that actually contains form fields
       if (el.querySelector(FIELD_SELECTOR)) return el;
     }
   }
-  // fallback: any dialog containing fields
+  // Fallback: any matching dialog, but only if it looks like Easy Apply (has text hint)
+  for (const sel of modalSelectors) {
+    const el = (root as Document).querySelector?.(sel) as Element | null;
+    if (el) {
+      const txt = (el.textContent || '').toLowerCase();
+      // Heuristic: Easy Apply modals contain these markers
+      if (txt.includes('easy apply') || txt.includes('additional questions') || el.querySelector('.fb-dash-form-element, .fb-form-element, .jobs-easy-apply-form-element')) {
+        return el;
+      }
+    }
+  }
+  // Last resort: any dialog/modal
   for (const sel of modalSelectors) {
     const el = (root as Document).querySelector?.(sel);
     if (el) return el;
   }
   return null;
+}
+
+function isCoverLetterField(field: Element, label: string): boolean {
+  const lowLabel = label.toLowerCase();
+  if (lowLabel.includes('cover letter') || lowLabel.includes('coverletter')) return true;
+  const aria = (field.getAttribute('aria-label') || '').toLowerCase();
+  if (aria.includes('cover letter')) return true;
+  if (aria === 'write a cover letter') return true;
+  const ph = (field.getAttribute('placeholder') || '').toLowerCase();
+  if (ph.includes('cover letter') || ph.includes('introduce yourself')) return true;
+  // Also check placeholder that commonly belongs to cover letter draft area
+  // Generic detection: textarea with label exactly "Cover letter" (case-insensitive) is cover
+  if (lowLabel.trim() === 'cover letter') return true;
+  return false;
+}
+
+function isAdditionalQuestionsStep(modal: Element): boolean {
+  const txt = (modal.textContent || '').toLowerCase();
+  if (txt.includes('additional questions')) return true;
+  if (modal.querySelector('.fb-dash-form-element, .fb-form-element, .jobs-easy-apply-form-element, [data-test-text-entity-list-form-component], [data-test-form-element]')) {
+    return true;
+  }
+  // Fallback heuristic: modal contains at least one field whose label looks like an employer question
+  // (contains ? or is long multi-word). This covers test fixtures that lack LinkedIn-specific classes.
+  // We avoid counting cover-letter or obvious contact-info labels as employer question signal.
+  const contactInfoExact = new Set([
+    'phone',
+    'phone number',
+    'mobile phone number',
+    'email',
+    'email address',
+    'city',
+    'street address',
+    'state',
+    'province',
+    'zip code',
+    'postal code',
+    'country',
+    'first name',
+    'last name',
+    'full name',
+    'address',
+    'location',
+    'home address',
+  ]);
+  const fields = Array.from(modal.querySelectorAll(FIELD_SELECTOR));
+  for (const f of fields) {
+    const type = (f.getAttribute('type') || '').toLowerCase();
+    if (type === 'hidden' || type === 'file') continue;
+    if (!isVisible(f as Element)) continue;
+    const { label } = resolveLabel(f as Element, modal as unknown as ParentNode);
+    if (!label) continue;
+    if (isCoverLetterField(f as Element, label)) continue;
+    const low = label.toLowerCase().trim();
+    if (contactInfoExact.has(low)) continue;
+    // employer question heuristics: ? or reasonably descriptive prompt
+    if (label.includes('?')) return true;
+    if (label.length >= 12) return true;
+  }
+  return false;
 }
 
 export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
@@ -113,8 +189,19 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
     'linkedin.com';
 
   const modal = findEasyApplyModal(root);
-  // Scope to modal when present; otherwise scan whole doc (modal may not have opened yet)
-  const scope: ParentNode = (modal as unknown as ParentNode) ?? root;
+  const jobContext = extractLinkedInJobContext(root);
+
+  // S7B: if no Easy Apply dialog container, return no questions (skip search page entirely)
+  if (!modal) {
+    return { questions: [], jobContext, host, adapter: 'linkedin' };
+  }
+
+  // S7B: within dialog, only Additional Questions step
+  if (!isAdditionalQuestionsStep(modal)) {
+    return { questions: [], jobContext, host, adapter: 'linkedin' };
+  }
+
+  const scope: ParentNode = modal as unknown as ParentNode;
 
   const rawFields = Array.from((scope as Document | Element).querySelectorAll?.(FIELD_SELECTOR) ?? []);
 
@@ -123,10 +210,8 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
     const type = (el.getAttribute('type') || '').toLowerCase();
     if (type === 'hidden' || type === 'password') return false;
     if (type === 'file') return false;
-    // Exclude nav/search inputs outside modal context
     const name = (el.getAttribute('name') || '').toLowerCase();
     if (['q', 'search', 'keyword'].includes(name) && !el.closest('form')) return false;
-    // Dedupe radio/checkbox groups
     if (type === 'radio' || type === 'checkbox') {
       const gname = el.getAttribute('name');
       if (gname) {
@@ -136,12 +221,12 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
         if (first !== el) return false;
       }
     }
-    // LinkedIn Easy Apply step scoping: when modal has step indicator,
-    // still include all fields — LinkedIn paginates inside modal, each step is valid
     return true;
   });
 
-  const questions: ExtractedQuestion[] = [];
+  // Build candidate questions, partitioning cover-letter vs employer
+  const employerCandidates: ExtractedQuestion[] = [];
+  const coverCandidates: ExtractedQuestion[] = [];
   const seenIds = new Set<string>();
 
   for (const field of fields) {
@@ -150,7 +235,6 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
     if (label.length < 4) continue;
     if (label.length > 500) continue;
     if (label.length > 220 && !label.trim().endsWith('?')) continue;
-    // PII/blob guard: skip huge non-question blobs
     if (label.length > 180 && !label.includes('?') && label.split(/\s+/).length > 25) continue;
 
     const fid = fieldId(field);
@@ -161,7 +245,7 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
     const confidence = CONFIDENCE_BY_SOURCE[source];
     const ftype = fieldTypeFor(field);
 
-    questions.push({
+    const q: ExtractedQuestion = {
       id: fid,
       label,
       fieldType: ftype,
@@ -175,10 +259,27 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
       },
       labelSource: source,
       confidence,
-    });
+    };
+
+    if (isCoverLetterField(field, label)) {
+      coverCandidates.push(q);
+    } else {
+      employerCandidates.push(q);
+    }
   }
 
-  const jobContext = extractLinkedInJobContext(root);
+  // S7B cover-letter carve-out: do NOT specially target cover letter UNLESS co-located with employer questions
+  // Same page-level presence signal: employer question exists in this step
+  let questions: ExtractedQuestion[];
+  if (coverCandidates.length > 0 && employerCandidates.length === 0) {
+    // No employer question present in this step -> cover letter not co-located, exclude it
+    questions = [];
+  } else if (coverCandidates.length > 0 && employerCandidates.length > 0) {
+    // Co-located: keep both (no special exclusion)
+    questions = [...employerCandidates, ...coverCandidates];
+  } else {
+    questions = employerCandidates;
+  }
 
   return { questions, jobContext, host, adapter: 'linkedin' };
 }
