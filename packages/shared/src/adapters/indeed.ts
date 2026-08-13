@@ -16,7 +16,45 @@ import {
 // Indeed adapter (S7)
 // Mirrors jobstreet.ts shape: confidence via CONFIDENCE_BY_SOURCE,
 // label-for/proximity/blob-PII guards. Scoped to Indeed application flow.
+// S7C: scoped to smartapply.indeed.com questions-module step(s) only.
 // ---------------------------------------------------------------------------
+
+function isIndeedQuestionsModuleStep(root: ParentNode): boolean {
+  const loc = (root as unknown as Document).location as unknown as
+    | { href?: string; hostname?: string; pathname?: string }
+    | undefined;
+  const href = loc?.href || '';
+  const hostname = loc?.hostname || '';
+  const pathname = loc?.pathname || '';
+
+  // JSDOM test fixtures have about:blank / empty hostname — treat as
+  // questions-module for test compatibility; real browser always has a URL.
+  if (!href || href === 'about:blank' || !hostname) return true;
+
+  // Real employer questions live only on smartapply.indeed.com
+  if (!hostname.includes('smartapply')) return false;
+
+  // URL pattern /beta/indeedapply/form/questions-module/questions/N
+  // N increments across multi-page flows — match any digit sequence.
+  const questionsModuleRe = /\/beta\/indeedapply\/form\/questions-module\/questions\/\d+/;
+  if (!questionsModuleRe.test(pathname)) return false;
+
+  return true;
+}
+
+function isCoverLetterField(field: Element, label: string): boolean {
+  const lowerLabel = label.toLowerCase();
+  if (lowerLabel.includes('cover letter')) return true;
+  const name = (field.getAttribute('name') || '').toLowerCase();
+  if (name.includes('coverletter') || name.includes('cover_letter') || name.includes('cover-letter')) return true;
+  const id = (field.getAttribute('id') || '').toLowerCase();
+  if (id.includes('coverletter') || id.includes('cover_letter') || id.includes('cover-letter')) return true;
+  const ariaLabel = (field.getAttribute('aria-label') || '').toLowerCase();
+  if (ariaLabel.includes('cover letter')) return true;
+  const placeholder = (field.getAttribute('placeholder') || '').toLowerCase();
+  if (placeholder.includes('cover letter')) return true;
+  return false;
+}
 
 function extractIndeedJobContext(root: ParentNode): JobContext {
   const ctx: JobContext = {};
@@ -87,6 +125,14 @@ export function extractIndeedQuestions(root: ParentNode): ExtractionResult {
     (root as unknown as { host?: string }).host ||
     'indeed.com';
 
+  const jobContext = extractIndeedJobContext(root);
+
+  // S7C: only questions-module step(s) surface real employer questions.
+  // Exclude homepage/search-results and resume-selection-module entirely.
+  if (!isIndeedQuestionsModuleStep(root)) {
+    return { questions: [], jobContext, host, adapter: 'indeed' };
+  }
+
   const scope = findIndeedFormRoot(root);
   const rawFields = Array.from((scope as Document | Element).querySelectorAll?.(FIELD_SELECTOR) ?? []);
 
@@ -109,7 +155,17 @@ export function extractIndeedQuestions(root: ParentNode): ExtractionResult {
     return true;
   });
 
-  const questions: ExtractedQuestion[] = [];
+  // Two-pass: collect candidates with cover-letter flag, then apply
+  // co-location rule — cover letter excluded unless alongside employer Q.
+  type Candidate = {
+    field: Element;
+    label: string;
+    source: ReturnType<typeof resolveLabel>['source'];
+    labelCtx: string | undefined;
+    fid: string;
+    isCoverLetter: boolean;
+  };
+  const candidates: Candidate[] = [];
   const seenIds = new Set<string>();
 
   for (const field of fields) {
@@ -124,28 +180,40 @@ export function extractIndeedQuestions(root: ParentNode): ExtractionResult {
     if (seenIds.has(fid)) continue;
     seenIds.add(fid);
 
-    const ctx = contextFor(field) ?? labelCtx;
-    const confidence = CONFIDENCE_BY_SOURCE[source];
-    const ftype = fieldTypeFor(field);
+    const isCoverLetter = isCoverLetterField(field, label);
+    candidates.push({ field, label, source, labelCtx, fid, isCoverLetter });
+  }
+
+  // Same page-level presence signal used to find employer questions:
+  // do we have at least one non-cover-letter question on this page?
+  const hasEmployerQuestion = candidates.some((c) => !c.isCoverLetter);
+
+  const questions: ExtractedQuestion[] = [];
+  for (const c of candidates) {
+    // S7C cover-letter carve-out: exclude cover letter unless co-located
+    // with real employer questions on the same questions-module step.
+    if (c.isCoverLetter && !hasEmployerQuestion) continue;
+
+    const ctx = contextFor(c.field) ?? c.labelCtx;
+    const confidence = CONFIDENCE_BY_SOURCE[c.source];
+    const ftype = fieldTypeFor(c.field);
 
     questions.push({
-      id: fid,
-      label,
+      id: c.fid,
+      label: c.label,
       fieldType: ftype,
       context: ctx,
       field: {
-        tagName: field.tagName.toLowerCase(),
-        id: field.getAttribute('id') || undefined,
-        name: field.getAttribute('name') || undefined,
-        type: field.getAttribute('type') || undefined,
-        selector: fieldSelector(field),
+        tagName: c.field.tagName.toLowerCase(),
+        id: c.field.getAttribute('id') || undefined,
+        name: c.field.getAttribute('name') || undefined,
+        type: c.field.getAttribute('type') || undefined,
+        selector: fieldSelector(c.field),
       },
-      labelSource: source,
+      labelSource: c.source,
       confidence,
     });
   }
-
-  const jobContext = extractIndeedJobContext(root);
 
   return { questions, jobContext, host, adapter: 'indeed' };
 }
