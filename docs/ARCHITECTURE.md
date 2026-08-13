@@ -99,7 +99,7 @@ Free tier: Copy. Premium: Copy + Insert (fills the field; user still reviews and
 | Table | Holds | Key columns |
 |---|---|---|
 | `profiles` | The user | auth id, display name, locale, tier |
-| `documents` | Uploads and pasted cover letters | file ref (nullable — null for pasted text), kind (resume/cover/transcript), extracted text, parsed_at |
+| `documents` | Uploads, pasted cover letters, and accepted Draft Cover Letter output | file ref (nullable — null for pasted text), kind (resume/cover/transcript), extracted text, parsed_at, origin (nullable — set for accepted cover-letter drafts) |
 | `memory_chunks` | Searchable pieces of history | text, embedding, source ref, type (experience/skill/story/preference/gap_answer/qa_pair), freshness_at |
 | `applications` | Each application the user works | company, role, site, url hash, status, submitted_at |
 | `qa_pairs` | Every question the user answered | question_norm, embedding, answer_text, application_id, **draft_text**, **origin**, **edit_distance** — **the growth loop** |
@@ -110,7 +110,7 @@ Free tier: Copy. Premium: Copy + Insert (fills the field; user still reviews and
 | `capture_mismatches` | D16 re-derive-drop audit log | application_id, question_label, original_mapping, rederived_mapping, reason, created_at |
 | `extraction_failures` | Adapter extraction telemetry | adapter, host, url, url_hash, detected_fields, extracted_questions, failure_reason, created_at |
 
-`origin` on `qa_pairs` is one of `user_written`, `user_edited`, `accepted_verbatim`. It is derived by comparing `draft_text` against what the user actually submitted, and it is what keeps the voice corpus clean (see below).
+`origin` on `qa_pairs` is one of `user_written`, `user_edited`, `accepted_verbatim`. It is derived by comparing `draft_text` against what the user actually submitted, and it is what keeps the voice corpus clean (see below). `documents.origin` carries the same three values for accepted Draft Cover Letter output (S8) and is NULL for every other row (uploads, non-draft pastes).
 
 `gap_answers` is deliberately separate from `qa_pairs`: it is an answer to Jobibi's question, not an employer's, and keeping the question text lets Jobibi avoid asking the same thing twice. Its content is also chunked into `memory_chunks` so it is retrievable like any other history.
 
