@@ -9,17 +9,27 @@
 do $$
 declare
   cname text;
+  type_attnum smallint;
 begin
-  -- find whichever check constraint currently guards memory_chunks.type
-  select conname into cname
-  from pg_constraint
-  where conrelid = 'public.memory_chunks'::regclass
-    and contype = 'c'
-    and pg_get_constraintdef(oid) ilike '%type%in%';
+  -- find whichever check constraint currently guards memory_chunks.type, by
+  -- matching on the constrained column itself (via conkey) rather than the
+  -- rendered constraint text, since Postgres canonicalizes `IN (...)` to
+  -- `= ANY (ARRAY[...])` and a text match on 'in' would never fire.
+  select attnum into type_attnum
+  from pg_attribute
+  where attrelid = 'public.memory_chunks'::regclass
+    and attname = 'type'
+    and not attisdropped;
 
-  if cname is not null then
+  for cname in
+    select conname
+    from pg_constraint
+    where conrelid = 'public.memory_chunks'::regclass
+      and contype = 'c'
+      and conkey = array[type_attnum]
+  loop
     execute format('alter table public.memory_chunks drop constraint %I', cname);
-  end if;
+  end loop;
 end $$;
 
 -- also handle the named variant explicitly for idempotency when pg_constraint lookup misses
