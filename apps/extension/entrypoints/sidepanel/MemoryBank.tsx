@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { SENSITIVE_FACT_KINDS, type DocumentKind, type SensitiveFactKind } from '@jobibi/shared';
 import { supabase } from './supabase';
 import UploadDocument from './UploadDocument';
+import DraftCoverLetter from './DraftCoverLetter';
 import Intake from './Intake';
 
 interface DocumentRow {
@@ -75,6 +76,13 @@ function MemoryBank({ userId }: MemoryBankProps) {
   return (
     <div className="flex w-full max-w-md flex-col gap-3 p-4">
       <UploadDocument userId={userId} onIngested={refresh} />
+      {/* S8: Draft Cover Letter — separate section, not folded into Upload.
+          Upload is one-shot ingestion; this is a compose-review-decide
+          workflow (paste JD → generate → edit → accept/discard) and does
+          not fit the same card. Adapter-independent: works the same on every
+          job site. Paste-always (no LinkedIn auto-fill) keeps S8 independent
+          of S7; LinkedIn auto-fill is a separable future follow-up. */}
+      <DraftCoverLetter onStored={refresh} />
       <Intake userId={userId} onSaved={refresh} />
 
       <div className="flex flex-col gap-2 rounded border border-slate-200 p-3">

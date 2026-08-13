@@ -10,6 +10,12 @@ create extension if not exists vector with schema extensions;
 
 -- documents ------------------------------------------------------------
 
+-- S8 note: 'transcript' and 'cover_letter' stay valid in this CHECK even
+-- though the UploadDocument picker no longer offers them — 'cover_letter' is
+-- still the storage kind for accepted drafts from the Draft Cover Letter
+-- facility, and 'transcript' is intentionally kept-but-unreachable so the
+-- removal stays UI-only (no constraint/type narrowing). See
+-- packages/shared/src/index.ts DOCUMENT_KINDS and docs/build/v0.1.md S8.
 create table public.documents (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
