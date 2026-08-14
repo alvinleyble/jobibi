@@ -247,6 +247,29 @@ Deno.serve(async (req) => {
       console.warn('[manual-input] answer too short to chunk, skipping memory_chunks', { len: trimmedAnswer.length });
     }
 
+    // S9: voice-corpus trigger (qa_pairs D13-filtered counts; this insert is user_written)
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const { count: qaCount } = await supabase.from('qa_pairs').select('id', { count: 'exact', head: true }).eq('user_id', user.id).in('origin', ['user_written', 'user_edited']) as unknown as { count: number | null };
+      const { count: docCount } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('user_id', user.id).in('origin', ['user_written', 'user_edited']) as unknown as { count: number | null };
+      const { count: gapCount } = await supabase.from('gap_answers').select('id', { count: 'exact', head: true }).eq('user_id', user.id) as unknown as { count: number | null };
+      const currentCount = (qaCount ?? 0) + (docCount ?? 0) + (gapCount ?? 0);
+      const { data: sp } = await supabase.from('style_profile').select('corpus_size, rebuilding, rebuilding_started_at').eq('user_id', user.id).maybeSingle();
+      const prof = sp as { corpus_size: number; rebuilding: boolean; rebuilding_started_at: string | null } | null;
+      const lastSize = prof?.corpus_size ?? 0;
+      let inFlight = false;
+      if (prof?.rebuilding) {
+        if (!prof.rebuilding_started_at) inFlight = true;
+        else { const st = new Date(prof.rebuilding_started_at).getTime(); inFlight = !Number.isNaN(st) && Date.now() - st < 30 * 60 * 1000; }
+      }
+      if (currentCount - lastSize >= 10 && !inFlight) {
+        const nowIso = new Date().toISOString();
+        if (prof) await supabase.from('style_profile').update({ rebuilding: true, rebuilding_started_at: nowIso }).eq('user_id', user.id);
+        else await supabase.from('style_profile').insert({ user_id: user.id, corpus_size: 0, rebuilding: true, rebuilding_started_at: nowIso });
+        fetch(`${supabaseUrl}/functions/v1/style-profile`, { method: 'POST', headers: { Authorization: authHeader, 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: 'auto' }) }).catch(() => {});
+      }
+    } catch { /* silent — next write retries */ }
+
     return jsonResponse(
       {
         ok: true,

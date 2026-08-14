@@ -46,3 +46,19 @@ export {
   scoreNearDuplicate,
 } from './capture/capture.ts';
 export type { QaOrigin, OriginResult, MappingVerifyResult } from './capture/capture.ts';
+
+// Style profile (S9) — lightweight, safe for extension bundle (no ingestion deps)
+export {
+  VOICE_CORPUS_TRIGGER_DELTA,
+  VOICE_CORPUS_MAX_ITEMS,
+  STYLE_PROFILE_MAX_OUTPUT_TOKENS,
+  STYLE_PROFILE_MAX_PROFILE_CHARS,
+  STYLE_PROFILE_MAX_BULLETS,
+  STALE_REBUILD_MS,
+  shouldTriggerRebuild,
+  isInFlight,
+  buildDistillationSystemPrompt,
+  buildDistillationUserContent,
+  sanitizeProfileMd,
+} from './styleProfile/styleProfile.ts';
+export type { VoiceCorpusItem } from './styleProfile/styleProfile.ts';

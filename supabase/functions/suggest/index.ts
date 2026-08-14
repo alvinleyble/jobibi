@@ -448,7 +448,16 @@ Deno.serve(async (req) => {
     if (!apiKey) return jsonResponse({ error: 'OPENAI_API_KEY not configured' }, 500);
 
     const snippets = scored.slice(0, 4).map((s) => s.row.text).join('\n---\n');
-    const system = `You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below. Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.`;
+    // S9: fetch style profile (cached system prompt alongside snippets + question/job-context, ARCHITECTURE step 9)
+    // When no row yet, omit entirely — draft normally with no special state.
+    let styleProfileMd: string | null = null;
+    try {
+      const { data: sp } = await supabase.from('style_profile').select('profile_md').eq('user_id', user.id).maybeSingle();
+      const md = (sp as { profile_md: string | null } | null)?.profile_md?.trim();
+      if (md) styleProfileMd = md.slice(0, 2000);
+    } catch { /* omit on error */ }
+    const styleBlock = styleProfileMd ? `Style profile — how the user writes (follow this voice):\n${styleProfileMd}\n\n` : '';
+    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below. Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
 
     const payload = {
       model: 'gpt-5.6-luna',

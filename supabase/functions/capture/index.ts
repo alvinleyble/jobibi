@@ -345,6 +345,35 @@ Deno.serve(async (req) => {
       }
     }
 
+    // S9: voice-corpus trigger — delta-since-last-rebuild >=10, skip-if-in-flight, silent-fail
+    if (inserted.length > 0) {
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const { count: qaCount } = await supabase.from('qa_pairs').select('id', { count: 'exact', head: true }).eq('user_id', user.id).in('origin', ['user_written', 'user_edited']) as unknown as { count: number | null };
+        const { count: docCount } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('user_id', user.id).in('origin', ['user_written', 'user_edited']) as unknown as { count: number | null };
+        const { count: gapCount } = await supabase.from('gap_answers').select('id', { count: 'exact', head: true }).eq('user_id', user.id) as unknown as { count: number | null };
+        const currentCount = (qaCount ?? 0) + (docCount ?? 0) + (gapCount ?? 0);
+        const { data: sp } = await supabase.from('style_profile').select('corpus_size, rebuilding, rebuilding_started_at').eq('user_id', user.id).maybeSingle();
+        const prof = sp as { corpus_size: number; rebuilding: boolean; rebuilding_started_at: string | null } | null;
+        const lastSize = prof?.corpus_size ?? 0;
+        const delta = currentCount - lastSize;
+        let inFlight = false;
+        if (prof?.rebuilding) {
+          if (!prof.rebuilding_started_at) inFlight = true;
+          else {
+            const started = new Date(prof.rebuilding_started_at).getTime();
+            inFlight = !Number.isNaN(started) && Date.now() - started < 30 * 60 * 1000;
+          }
+        }
+        if (delta >= 10 && !inFlight) {
+          const nowIso = new Date().toISOString();
+          if (prof) await supabase.from('style_profile').update({ rebuilding: true, rebuilding_started_at: nowIso }).eq('user_id', user.id);
+          else await supabase.from('style_profile').insert({ user_id: user.id, corpus_size: 0, rebuilding: true, rebuilding_started_at: nowIso });
+          fetch(`${supabaseUrl}/functions/v1/style-profile`, { method: 'POST', headers: { Authorization: authHeader, 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: 'auto' }) }).catch(() => {});
+        }
+      } catch { /* silent — next write retries */ }
+    }
+
     return jsonResponse({
       ok: true,
       applicationId,

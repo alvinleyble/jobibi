@@ -239,7 +239,15 @@ Deno.serve(async (req) => {
     }
     const snippets = [chunkText, ...otherSnippets].slice(0, 4).join('\n---\n');
 
-    const system = `You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below (first snippet is the user's fresh answer to your gap question, so use it). Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.`;
+    // S9: style profile into drafting (consistent with suggest/draft-cover-letter)
+    let styleProfileMd: string | null = null;
+    try {
+      const { data: sp } = await supabase.from('style_profile').select('profile_md').eq('user_id', user.id).maybeSingle();
+      const md = (sp as { profile_md: string | null } | null)?.profile_md?.trim();
+      if (md) styleProfileMd = md.slice(0, 2000);
+    } catch { /* omit */ }
+    const styleBlock = styleProfileMd ? `Style profile — how the user writes (follow this voice):\n${styleProfileMd}\n\n` : '';
+    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below (first snippet is the user's fresh answer to your gap question, so use it). Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
     const payload = {
       model: 'gpt-5.6-luna',
       max_completion_tokens: MAX_OUTPUT_TOKENS,
@@ -299,6 +307,29 @@ Deno.serve(async (req) => {
     if (draftedAnswer.length > MAX_ANSWER_CHARS) draftedAnswer = draftedAnswer.slice(0, MAX_ANSWER_CHARS);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'gap_answer', label: 'Your gap answer', ref: (gapRow as { id: string }).id }];
+
+    // S9: voice-corpus trigger (gap_answers always counts, D13 no filter)
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const { count: qaCount } = await supabase.from('qa_pairs').select('id', { count: 'exact', head: true }).eq('user_id', user.id).in('origin', ['user_written', 'user_edited']) as unknown as { count: number | null };
+      const { count: docCount } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('user_id', user.id).in('origin', ['user_written', 'user_edited']) as unknown as { count: number | null };
+      const { count: gapCount } = await supabase.from('gap_answers').select('id', { count: 'exact', head: true }).eq('user_id', user.id) as unknown as { count: number | null };
+      const currentCount = (qaCount ?? 0) + (docCount ?? 0) + (gapCount ?? 0);
+      const { data: sp } = await supabase.from('style_profile').select('corpus_size, rebuilding, rebuilding_started_at').eq('user_id', user.id).maybeSingle();
+      const prof = sp as { corpus_size: number; rebuilding: boolean; rebuilding_started_at: string | null } | null;
+      const lastSize = prof?.corpus_size ?? 0;
+      let inFlight = false;
+      if (prof?.rebuilding) {
+        if (!prof.rebuilding_started_at) inFlight = true;
+        else { const st = new Date(prof.rebuilding_started_at).getTime(); inFlight = !Number.isNaN(st) && Date.now() - st < 30 * 60 * 1000; }
+      }
+      if (currentCount - lastSize >= 10 && !inFlight) {
+        const nowIso = new Date().toISOString();
+        if (prof) await supabase.from('style_profile').update({ rebuilding: true, rebuilding_started_at: nowIso }).eq('user_id', user.id);
+        else await supabase.from('style_profile').insert({ user_id: user.id, corpus_size: 0, rebuilding: true, rebuilding_started_at: nowIso });
+        fetch(`${supabaseUrl}/functions/v1/style-profile`, { method: 'POST', headers: { Authorization: authHeader, 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: 'auto' }) }).catch(() => {});
+      }
+    } catch { /* silent */ }
 
     return jsonResponse(
       GapAnswerResponseSchema.parse({

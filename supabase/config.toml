@@ -392,6 +392,9 @@ import_map = "../deno.json"
 [functions.draft-cover-letter]
 import_map = "../deno.json"
 
+[functions.style-profile]
+import_map = "../deno.json"
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
