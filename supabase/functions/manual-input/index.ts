@@ -7,6 +7,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
+import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { deriveOrigin } from '../../../packages/shared/src/capture/capture.ts';
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
@@ -246,6 +247,9 @@ Deno.serve(async (req) => {
       // answer too short to chunk — still a success, qa_pairs already persisted
       console.warn('[manual-input] answer too short to chunk, skipping memory_chunks', { len: trimmedAnswer.length });
     }
+
+    // S9: voice-corpus trigger (qa_pairs D13-filtered counts; this insert is user_written); style-profile owns claim/in-flight
+    await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
 
     return jsonResponse(
       {

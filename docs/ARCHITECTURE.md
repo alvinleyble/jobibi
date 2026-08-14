@@ -14,7 +14,7 @@ flowchart LR
         AUTH["Auth"]
         DB["Postgres + pgvector<br/>row-level security"]
         STG["Storage<br/>resume/cover letter files"]
-        EF["Edge Functions<br/>suggest · ingest · capture · gap-answer ·<br/>sensitive-confirm · manual-input · grill · export<br/>(embeddings run in-process)"]
+        EF["Edge Functions<br/>suggest · ingest · capture · gap-answer ·<br/>sensitive-confirm · manual-input · draft-cover-letter ·<br/>style-profile · grill · export<br/>(embeddings run in-process)"]
     end
     LLM["OpenAI GPT-5.6 Luna<br/>key lives server-side only"]
 
@@ -36,7 +36,7 @@ The extension never talks to the AI directly — every AI call goes through an E
 - **Supabase** — auth, Postgres, file storage, and server code in one vendor with a generous free tier; we already operate Supabase in production elsewhere, so the tooling is familiar. Singapore region (`ap-southeast-1`) for PH latency.
 - **Postgres + pgvector** — the memory bank with meaning-based search: finds the right story from the user's history even when the question is worded differently. Hybrid retrieval (vector similarity + keyword full-text) because personal corpora are small and keyword anchors help.
 - **Row-Level Security (RLS)** — per-user isolation enforced by the database on every table. The privacy claim is structural, not behavioral.
-- **OpenAI GPT-5.6 Luna** for everything the model does: drafting, wording gap questions, and classification where rules don't suffice. One vendor, one SDK, one bill. Chosen for price ($0.20/$1.20 per MTok after the 30 July cut), best-in-class strict JSON schema output, ephemeral prompt caching that costs nothing while idle, and a half-price batch tier for the style-profile job. The accepted trade is that its writing voice is the least-measured of the candidates considered — see DECISIONS D5b and the risk list below.
+- **OpenAI GPT-5.6 Luna** for everything the model does: drafting, wording gap questions, and classification where rules don't suffice. One vendor, one SDK, one bill. Chosen for price ($0.20/$1.20 per MTok after the 30 July cut), best-in-class strict JSON schema output, ephemeral prompt caching that costs nothing while idle, and a half-price batch tier reserved for the style-profile job once a poller lands (direct completion for now, D19). The accepted trade is that its writing voice is the least-measured of the candidates considered — see DECISIONS D5b and the risk list below.
 - **Embeddings: gte-small, in-process** inside Edge Functions. Free, no network hop, and the memory bank is never sent anywhere to be embedded — only retrieved snippets leave at draft time. Its 384 dimensions are weaker than a dedicated embedding API, but on a cold-start corpus of 20–100 chunks that gap barely shows, and gate calibration dominates behaviour anyway. `memory_chunks` stores source text, so upgrading later is a batch re-embed per user rather than data loss.
 - **Monorepo (pnpm):** `apps/extension` (WXT), `supabase/` (functions + migrations), `packages/shared` (types + zod schemas shared end-to-end).
 
@@ -131,8 +131,8 @@ So the content script keeps watching the fields it already mapped and reads thei
 ## Memory growth and the style profile
 
 - On submit, captured answers land in `qa_pairs` with their `origin`, and new facts/stories are chunked into `memory_chunks`.
-- A background job re-distills the **style profile** every N new answers. This is the concrete mechanism behind "attuned after 15–20 applications". Distillation is batch work and runs on the half-price batch tier.
-- **The voice corpus is filtered by origin.** Only `user_written` and `user_edited` text trains the style profile. `accepted_verbatim` drafts remain fully searchable as *content* but are excluded from *voice* learning. Without this filter, by application 15 most of `qa_pairs` would be Jobibi's own prose, and the style profile would be distilling model tone rather than the user's — drifting further from them with every cycle while claiming to do the opposite.
+- A background job re-distills the **style profile** once the qualifying voice-corpus delta since the last rebuild reaches 10 (D19). This is the concrete mechanism behind "attuned after 15–20 applications". Distillation runs as a direct chat completion today; the half-price batch tier is deferred until a poller can reconcile its async result (D19).
+- **The voice corpus is filtered by origin.** It is the union of `qa_pairs` and `documents` rows with `origin in (user_written, user_edited)` plus all `gap_answers` rows (D19). `accepted_verbatim` drafts remain fully searchable as *content* but are excluded from *voice* learning. Without this filter, by application 15 most of `qa_pairs` would be Jobibi's own prose, and the style profile would be distilling model tone rather than the user's — drifting further from them with every cycle while claiming to do the opposite.
 - Every fact type has a freshness half-life (salary ~90 days, notice period ~90, tools/skills ~180, relocation ~180). Stale facts power **Grill Me** sessions and contextual re-confirms.
 
 ## Auto-Fill mechanics (premium)
@@ -153,7 +153,7 @@ Per question: ~1k fresh input (question + snippets + job context) + ~1.8k cached
 
 - ≈ **$0.0006 per question** → **≈ $0.012 per 20-question application**.
 - Embeddings are free (gte-small runs in-process).
-- Style-profile distillation runs on the batch tier at half price.
+- Style-profile distillation runs as a direct completion for now; the batch tier is deferred (D19).
 
 At $50/month of AI spend that is roughly 4,100 applications. **The free tier's daily cap is therefore a fairness and abuse control, not a cost control** — the original $0.20–0.30 per application estimate was an order of magnitude too high.
 

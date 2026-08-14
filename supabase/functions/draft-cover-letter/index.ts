@@ -134,7 +134,15 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get('OPENAI_API_KEY');
     if (!apiKey) return jsonResponse({ error: 'OPENAI_API_KEY not configured' }, 500);
 
-    const system = `You are Jobibi, an editor of the user's best self. Draft a cover letter grounded ONLY in the user's retrieved history snippets below. Never invent facts, experiences, or skills not in the snippets. Address the job described, highlighting the user's relevant experience. Keep the letter ≤${MAX_COVER_LETTER_CHARS} chars. Use a professional cover letter structure (greeting, body paragraphs, closing). Do not include salary, notice period, work authorization, or location expectations.`;
+    // S9: inject style profile into cached system prompt (same as suggest, ARCHITECTURE step 9)
+    let styleProfileMd: string | null = null;
+    try {
+      const { data: sp } = await supabase.from('style_profile').select('profile_md').eq('user_id', user.id).maybeSingle();
+      const md = (sp as { profile_md: string | null } | null)?.profile_md?.trim();
+      if (md) styleProfileMd = md.slice(0, 2000);
+    } catch { /* omit on error */ }
+    const styleBlock = styleProfileMd ? `Style profile — how the user writes (follow this voice):\n${styleProfileMd}\n\n` : '';
+    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft a cover letter grounded ONLY in the user's retrieved history snippets below. Never invent facts, experiences, or skills not in the snippets. Address the job described, highlighting the user's relevant experience. Keep the letter ≤${MAX_COVER_LETTER_CHARS} chars. Use a professional cover letter structure (greeting, body paragraphs, closing). Do not include salary, notice period, work authorization, or location expectations.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
 
     const payload = {
       model: 'gpt-5.6-luna',

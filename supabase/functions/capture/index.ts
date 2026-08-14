@@ -7,6 +7,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
+import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { deriveOrigin } from '../../../packages/shared/src/capture/capture.ts';
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
@@ -343,6 +344,11 @@ Deno.serve(async (req) => {
           console.error('[capture] memory_chunks insert failed', e);
         }
       }
+    }
+
+    // S9: voice-corpus trigger — delta-since-last-rebuild >=10; style-profile owns claim/in-flight
+    if (inserted.length > 0) {
+      await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
     }
 
     return jsonResponse({

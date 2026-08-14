@@ -6,6 +6,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
+import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { keywordOverlap, cosine, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
@@ -239,7 +240,15 @@ Deno.serve(async (req) => {
     }
     const snippets = [chunkText, ...otherSnippets].slice(0, 4).join('\n---\n');
 
-    const system = `You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below (first snippet is the user's fresh answer to your gap question, so use it). Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.`;
+    // S9: style profile into drafting (consistent with suggest/draft-cover-letter)
+    let styleProfileMd: string | null = null;
+    try {
+      const { data: sp } = await supabase.from('style_profile').select('profile_md').eq('user_id', user.id).maybeSingle();
+      const md = (sp as { profile_md: string | null } | null)?.profile_md?.trim();
+      if (md) styleProfileMd = md.slice(0, 2000);
+    } catch { /* omit */ }
+    const styleBlock = styleProfileMd ? `Style profile — how the user writes (follow this voice):\n${styleProfileMd}\n\n` : '';
+    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below (first snippet is the user's fresh answer to your gap question, so use it). Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
     const payload = {
       model: 'gpt-5.6-luna',
       max_completion_tokens: MAX_OUTPUT_TOKENS,
@@ -299,6 +308,9 @@ Deno.serve(async (req) => {
     if (draftedAnswer.length > MAX_ANSWER_CHARS) draftedAnswer = draftedAnswer.slice(0, MAX_ANSWER_CHARS);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'gap_answer', label: 'Your gap answer', ref: (gapRow as { id: string }).id }];
+
+    // S9: voice-corpus trigger (gap_answers always counts, D13 no filter); style-profile owns claim/in-flight
+    await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
 
     return jsonResponse(
       GapAnswerResponseSchema.parse({
