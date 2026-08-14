@@ -12,6 +12,7 @@ import { chunkText } from '../../../packages/shared/src/ingestion/chunk.ts';
 import { detectFormat, extractText } from '../../../packages/shared/src/ingestion/extract.ts';
 import { pastedDocumentProvenance, validatePaste } from '../../../packages/shared/src/ingestion/paste.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -195,28 +196,9 @@ Deno.serve(async (req) => {
     }
 
     // S9: trigger only for qualifying documents (user_written / user_edited); accepted_verbatim and NULL-origin uploads do not count (D13)
+    // style-profile owns claim/in-flight
     if (origin === 'user_written' || origin === 'user_edited') {
-      try {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-        const { count: qaCount } = await supabase.from('qa_pairs').select('id', { count: 'exact', head: true }).eq('user_id', user.id).in('origin', ['user_written', 'user_edited']) as unknown as { count: number | null };
-        const { count: docCount } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('user_id', user.id).in('origin', ['user_written', 'user_edited']) as unknown as { count: number | null };
-        const { count: gapCount } = await supabase.from('gap_answers').select('id', { count: 'exact', head: true }).eq('user_id', user.id) as unknown as { count: number | null };
-        const currentCount = (qaCount ?? 0) + (docCount ?? 0) + (gapCount ?? 0);
-        const { data: sp } = await supabase.from('style_profile').select('corpus_size, rebuilding, rebuilding_started_at').eq('user_id', user.id).maybeSingle();
-        const prof = sp as { corpus_size: number; rebuilding: boolean; rebuilding_started_at: string | null } | null;
-        const lastSize = prof?.corpus_size ?? 0;
-        let inFlight = false;
-        if (prof?.rebuilding) {
-          if (!prof.rebuilding_started_at) inFlight = true;
-          else { const st = new Date(prof.rebuilding_started_at).getTime(); inFlight = !Number.isNaN(st) && Date.now() - st < 30 * 60 * 1000; }
-        }
-        if (currentCount - lastSize >= 10 && !inFlight) {
-          const nowIso = new Date().toISOString();
-          if (prof) await supabase.from('style_profile').update({ rebuilding: true, rebuilding_started_at: nowIso }).eq('user_id', user.id);
-          else await supabase.from('style_profile').insert({ user_id: user.id, corpus_size: 0, rebuilding: true, rebuilding_started_at: nowIso });
-          fetch(`${supabaseUrl}/functions/v1/style-profile`, { method: 'POST', headers: { Authorization: authHeader, 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: 'auto' }) }).catch(() => {});
-        }
-      } catch { /* silent */ }
+      await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
     }
 
     return jsonResponse({ documentId: document.id, chunkCount: chunkRows.length }, 200);
