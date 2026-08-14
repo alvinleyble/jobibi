@@ -14,6 +14,7 @@ import {
   STYLE_PROFILE_MAX_OUTPUT_TOKENS,
   STYLE_PROFILE_MAX_PROFILE_CHARS,
   STYLE_PROFILE_MAX_BULLETS,
+  STALE_REBUILD_MS,
   buildDistillationSystemPrompt,
   buildDistillationUserContent,
   sanitizeProfileMd,
@@ -100,15 +101,18 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Claim rebuild atomically: only claim a row that isn't already claimed,
-    // so two near-simultaneous triggers can't both start a distillation.
+    // Claim rebuild atomically: only claim a row that isn't already claimed
+    // (or whose claim is stale), so two near-simultaneous triggers can't both
+    // start a distillation, while a crashed run still recovers after
+    // STALE_REBUILD_MS instead of deadlocking the row forever.
     const nowIso = new Date().toISOString();
     if (profile) {
+      const staleCutoffIso = new Date(Date.now() - STALE_REBUILD_MS).toISOString();
       const { data: claimed } = await supabase
         .from('style_profile')
         .update({ rebuilding: true, rebuilding_started_at: nowIso })
         .eq('user_id', user.id)
-        .eq('rebuilding', false)
+        .or(`rebuilding.eq.false,rebuilding_started_at.lt.${staleCutoffIso}`)
         .select('user_id')
         .maybeSingle();
       if (!claimed) {
