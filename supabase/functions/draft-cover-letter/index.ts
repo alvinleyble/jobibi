@@ -9,16 +9,17 @@ import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
-import { WEEKLY_COVER_LETTER_LIMIT } from '../../../packages/shared/src/settings/settings.ts';
+import {
+  OUTPUT_LENGTH_CONFIG,
+  WEEKLY_COVER_LETTER_LIMIT,
+  type OutputLength,
+} from '../../../packages/shared/src/settings/settings.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
 };
 
 // D8: explicit length cap — output dominates cost, beta budget is fixed $5.
-// Cover letters are longer than single-question answers, but still capped.
-const MAX_OUTPUT_TOKENS = 800;
-const MAX_COVER_LETTER_CHARS = 3000;
 const MAX_JOB_DESCRIPTION_CHARS = 8000;
 const MIN_JOB_DESCRIPTION_CHARS = 30;
 
@@ -53,13 +54,16 @@ Deno.serve(async (req) => {
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
     if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
 
-    // ── S12: Weekly Cover Letter Quota Check for non-beta users ──
+    // ── S12: Profile, Beta Status, and Quota/Length Enforcement ──
     const { data: profileRow } = await supabase
       .from('profiles')
-      .select('is_beta_tester')
+      .select('is_beta_tester, output_length')
       .eq('id', user.id)
       .maybeSingle();
     const isBetaTester = Boolean((profileRow as { is_beta_tester?: boolean } | null)?.is_beta_tester);
+    const userOutputLength: OutputLength = ((profileRow as { output_length?: string } | null)?.output_length as OutputLength) || 'short';
+    const activeOutputLength: OutputLength = isBetaTester ? userOutputLength : 'short';
+    const lengthConfig = OUTPUT_LENGTH_CONFIG[activeOutputLength] || OUTPUT_LENGTH_CONFIG.short;
 
     if (!isBetaTester) {
       const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -173,11 +177,11 @@ Deno.serve(async (req) => {
       if (md) styleProfileMd = md.slice(0, 2000);
     } catch { /* omit on error */ }
     const styleBlock = styleProfileMd ? `Style profile — how the user writes (follow this voice):\n${styleProfileMd}\n\n` : '';
-    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft a cover letter grounded ONLY in the user's retrieved history snippets below. Never invent facts, experiences, or skills not in the snippets. Address the job described, highlighting the user's relevant experience. Keep the letter ≤${MAX_COVER_LETTER_CHARS} chars. Use a professional cover letter structure (greeting, body paragraphs, closing). Do not include salary, notice period, work authorization, or location expectations.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
+    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft a cover letter grounded ONLY in the user's retrieved history snippets below. Never invent facts, experiences, or skills not in the snippets. Address the job described, highlighting the user's relevant experience. Keep the letter ${lengthConfig.wordRange} (≤${lengthConfig.maxChars} chars). Use a professional cover letter structure (greeting, body paragraphs, closing). Do not include salary, notice period, work authorization, or location expectations.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
 
     const payload = {
       model: 'gpt-5.6-luna',
-      max_completion_tokens: MAX_OUTPUT_TOKENS,
+      max_completion_tokens: lengthConfig.maxTokens,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -186,7 +190,7 @@ Deno.serve(async (req) => {
           schema: {
             type: 'object',
             properties: {
-              draft: { type: 'string', description: `Cover letter draft ≤${MAX_COVER_LETTER_CHARS} chars, grounded in snippets` },
+              draft: { type: 'string', description: `Cover letter draft (${lengthConfig.wordRange}, ≤${lengthConfig.maxChars} chars), grounded in snippets` },
               sources: {
                 type: 'array',
                 items: {
@@ -210,7 +214,7 @@ Deno.serve(async (req) => {
         { role: 'system', content: system },
         {
           role: 'user',
-          content: `Job description:\n${jobDescription.slice(0, MAX_JOB_DESCRIPTION_CHARS)}\n\nUser's history snippets:\n${snippets || '(no snippets — draft a general but truthful opening the user can edit)'}\n\nDraft a cover letter grounded only in snippets.`,
+          content: `Job description:\n${jobDescription.slice(0, MAX_JOB_DESCRIPTION_CHARS)}\n\nUser's history snippets:\n${snippets || '(no snippets — draft a general but truthful opening the user can edit)'}\n\nDraft a cover letter (${lengthConfig.wordRange}, ≤${lengthConfig.maxChars} chars) grounded only in snippets.`,
         },
       ],
     };
@@ -232,7 +236,7 @@ Deno.serve(async (req) => {
     } catch {
       return jsonResponse({ error: 'Model returned non-JSON' }, 502);
     }
-    const draft = (parsedContent.draft ?? '').slice(0, MAX_COVER_LETTER_CHARS);
+    const draft = (parsedContent.draft ?? '').slice(0, lengthConfig.maxChars);
     const sources = parsedContent.sources ?? [{ kind: 'memory_chunk', label: 'Your history', ref: 'memory' }];
 
     return jsonResponse(
