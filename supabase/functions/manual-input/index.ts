@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return jsonResponse({ error: 'Missing Authorization' }, 401);
+    if (!authHeader) return jsonResponse({ error: 'Please sign in to save an answer.' }, 401);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -50,16 +50,16 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } },
     );
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
+    if (userErr || !user) return jsonResponse({ error: 'Your session has expired. Please sign in again.' }, 401);
 
     const body = await req.json().catch(() => null);
     const parsed = ManualInputRequestSchema.safeParse(body);
-    if (!parsed.success) return jsonResponse({ error: parsed.error.flatten() }, 400);
+    if (!parsed.success) return jsonResponse({ error: 'Please provide a valid question and answer to save.' }, 400);
 
     const { questionLabel, answerText, jobContext, applicationId } = parsed.data;
     const qLabel = questionLabel.trim();
     const trimmedAnswer = answerText.trim();
-    if (!trimmedAnswer) return jsonResponse({ error: 'Answer must not be empty' }, 400);
+    if (!trimmedAnswer) return jsonResponse({ error: 'Please write an answer before saving.' }, 400);
     const qNorm = normalizeQuestion(qLabel);
 
     // ── S7A sensitive storage gate (D17) — reject-and-redirect before any insert ──
@@ -68,43 +68,32 @@ Deno.serve(async (req) => {
         .from('sensitive_facts')
         .select('id, kind, value, stated_at, confirmed_at, source_application_id')
         .eq('user_id', user.id)
-        .order('stated_at', { ascending: false })
-        .limit(50);
+        .order('stated_at', { ascending: false });
       if (factErr) throw factErr;
-      const typedFacts = ((factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? []).map((r) => ({
-        id: r.id,
-        kind: r.kind as import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact['kind'],
-        value: r.value,
-        stated_at: r.stated_at,
-        confirmed_at: r.confirmed_at,
-        source_application_id: r.source_application_id,
-      }));
-      const combined = `${qLabel} ${trimmedAnswer}`;
-      const candidates = [combined, trimmedAnswer, qLabel];
-      let sensitive: ReturnType<typeof detectSensitiveUnion> | null = null;
-      for (const t of candidates) {
-        const r = detectSensitiveUnion(t, typedFacts);
-        if (r.isSensitive) { sensitive = r; break; }
-      }
-      if (sensitive?.isSensitive) {
+      
+      const factList = ((factRows ?? []) as SensitiveFactRow[]).map(toTypedFact);
+      const combinedText = `${qLabel} ${trimmedAnswer}`;
+      const decision = detectSensitiveUnion(combinedText, factList);
+      
+      if (decision.sensitive) {
         let factPayload: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null = null;
-        if (sensitive.fact) {
+        if (decision.fact) {
           factPayload = {
-            id: sensitive.fact.id,
-            kind: sensitive.fact.kind,
-            value: sensitive.fact.value,
-            stated_at: sensitive.fact.stated_at,
-            confirmed_at: sensitive.fact.confirmed_at ?? null,
-            provenanceLine: buildProvenanceLine(sensitive.fact),
+            id: decision.fact.id,
+            kind: decision.fact.kind,
+            value: decision.fact.value,
+            stated_at: decision.fact.stated_at,
+            confirmed_at: decision.fact.confirmed_at ?? null,
+            provenanceLine: buildProvenanceLine(decision.fact),
           };
         }
         return jsonResponse(
           {
             error: 'sensitive_detected',
             code: 'sensitive_rejected',
-            message: `This looks like a sensitive field (${sensitive.kind}) — please confirm or update it via the sensitive flow.`,
-            sensitiveKind: sensitive.kind,
-            sensitiveVia: sensitive.via,
+            message: `This answer mentions ${decision.kind ?? 'a sensitive fact'}. To keep memory accurate, confirm it in your sensitive fields first.`,
+            sensitiveKind: decision.kind,
+            sensitiveVia: decision.via,
             sensitiveFact: factPayload,
           },
           409,
@@ -116,7 +105,7 @@ Deno.serve(async (req) => {
         {
           error: 'sensitive_detected',
           code: 'sensitive_rejected',
-          message: 'Could not verify sensitivity — please use the sensitive field flow.',
+          message: 'We could not verify if this information is sensitive. Please confirm or update it in your sensitive fields.',
           sensitiveKind: null,
           sensitiveVia: null,
           sensitiveFact: null,
@@ -178,17 +167,22 @@ Deno.serve(async (req) => {
       if (qaErr || !qaRow) {
         if (embedding) {
           const { data: qaRow2, error: qaErr2 } = await supabase.from('qa_pairs').insert({ ...qaPayload, embedding: null }).select('id').single();
-          if (!qaErr2 && qaRow2) qaId = (qaRow2 as { id: string }).id;
-          else return jsonResponse({ error: `Could not store answer: ${qaErr?.message ?? qaErr2?.message ?? 'unknown'}` }, 500);
+          if (!qaErr2 && qaRow2) {
+            qaId = (qaRow2 as { id: string }).id;
+          } else {
+            console.error('[manual-input] qa_pairs retry insert failed:', qaErr2 ?? qaErr);
+            return jsonResponse({ error: 'We could not save your answer to memory. Please try again.' }, 500);
+          }
         } else {
-          return jsonResponse({ error: `Could not store answer: ${qaErr?.message ?? 'unknown'}` }, 500);
+          console.error('[manual-input] qa_pairs insert failed:', qaErr);
+          return jsonResponse({ error: 'We could not save your answer to memory. Please try again.' }, 500);
         }
       } else {
         qaId = (qaRow as { id: string }).id;
       }
     }
 
-    // Also chunk into memory_chunks for retrieval (same pattern as gap-answer:119, tagged user-written via qa_pairs origin)
+    // Also chunk into memory_chunks for retrieval
     let memoryChunkId: string | null = null;
     if (trimmedAnswer.length >= 3) {
       try {
@@ -223,7 +217,7 @@ Deno.serve(async (req) => {
           }
           if (!recovered) {
             return jsonResponse(
-              { error: `Answer saved but not yet searchable — memory storage failed: ${memErr.message ?? 'unknown'}. Please retry.` },
+              { error: 'Your answer was saved, but search indexing failed. Please try saving again.' },
               500,
             );
           }
@@ -232,23 +226,19 @@ Deno.serve(async (req) => {
         } else {
           console.error('[manual-input] memory_chunks insert returned no row and no error');
           return jsonResponse(
-            { error: 'Answer saved but not yet searchable — memory storage returned no id. Please retry.' },
+            { error: 'Your answer was saved, but search indexing returned no ID. Please try saving again.' },
             500,
           );
         }
       } catch (e) {
         console.error('[manual-input] memory_chunks insert failed', e);
         return jsonResponse(
-          { error: `Answer saved but not yet searchable — memory storage failed: ${String(e)}. Please retry.` },
+          { error: 'Your answer was saved, but search indexing failed. Please try saving again.' },
           500,
         );
       }
-    } else {
-      // answer too short to chunk — still a success, qa_pairs already persisted
-      console.warn('[manual-input] answer too short to chunk, skipping memory_chunks', { len: trimmedAnswer.length });
     }
 
-    // S9: voice-corpus trigger (qa_pairs D13-filtered counts; this insert is user_written); style-profile owns claim/in-flight
     await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
 
     return jsonResponse(
@@ -261,6 +251,7 @@ Deno.serve(async (req) => {
       200,
     );
   } catch (e) {
-    return jsonResponse({ error: String(e) }, 500);
+    console.error('[manual-input] unexpected error:', e);
+    return jsonResponse({ error: 'An unexpected error occurred while saving your answer. Please try again.' }, 500);
   }
 });

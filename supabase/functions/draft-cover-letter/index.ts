@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return jsonResponse({ error: 'Missing Authorization' }, 401);
+    if (!authHeader) return jsonResponse({ error: 'Please sign in to generate a cover letter.' }, 401);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } },
     );
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
+    if (userErr || !user) return jsonResponse({ error: 'Your session has expired. Please sign in again.' }, 401);
 
     // ── S12: Profile, Beta Status, and Quota/Length Enforcement ──
     const { data: profileRow } = await supabase
@@ -89,11 +89,13 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => null);
     const parsed = DraftCoverLetterRequestSchema.safeParse(body);
-    if (!parsed.success) return jsonResponse({ error: parsed.error.flatten() }, 400);
+    if (!parsed.success) {
+      return jsonResponse({ error: `Please provide a valid job description (at least ${MIN_JOB_DESCRIPTION_CHARS} characters).` }, 400);
+    }
 
     const jobDescription = parsed.data.jobDescription.trim();
     if (jobDescription.length < MIN_JOB_DESCRIPTION_CHARS) {
-      return jsonResponse({ error: `Job description is too short (minimum ${MIN_JOB_DESCRIPTION_CHARS} characters)` }, 422);
+      return jsonResponse({ error: `Please provide a longer job description (at least ${MIN_JOB_DESCRIPTION_CHARS} characters) so Jobibi can draft a tailored cover letter.` }, 422);
     }
 
     // ── Retrieve: same hybrid pipeline as suggest, query is the JD text ──
@@ -160,7 +162,10 @@ Deno.serve(async (req) => {
     const snippets = scored.slice(0, 6).map((s) => s.row.text).join('\n---\n');
 
     const apiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!apiKey) return jsonResponse({ error: 'OPENAI_API_KEY not configured' }, 500);
+    if (!apiKey) {
+      console.error('[draft-cover-letter] OPENAI_API_KEY not configured');
+      return jsonResponse({ error: 'The drafting service is temporarily unavailable. Please try again in a few moments.' }, 500);
+    }
 
     // S9: inject style profile into cached system prompt (same as suggest, ARCHITECTURE step 9)
     let styleProfileMd: string | null = null;
@@ -219,7 +224,8 @@ Deno.serve(async (req) => {
     });
     if (!resp.ok) {
       const text = await resp.text();
-      return jsonResponse({ error: `OpenAI error ${resp.status}: ${text.slice(0, 500)}` }, 502);
+      console.error('[draft-cover-letter] OpenAI API error:', resp.status, text);
+      return jsonResponse({ error: 'We could not generate your cover letter right now. Please try again in a moment.' }, 502);
     }
     const data = (await resp.json()) as {
       choices?: {
@@ -230,17 +236,20 @@ Deno.serve(async (req) => {
 
     const choice = data.choices?.[0];
     if (!choice) {
-      return jsonResponse({ error: 'No response choices returned by model' }, 502);
+      console.error('[draft-cover-letter] No response choices returned by model');
+      return jsonResponse({ error: 'We could not generate your cover letter right now. Please try again in a moment.' }, 502);
     }
 
     if (choice.message?.refusal) {
-      return jsonResponse({ error: `Model refused to draft cover letter: ${choice.message.refusal}` }, 502);
+      console.error('[draft-cover-letter] Model refusal:', choice.message.refusal);
+      return jsonResponse({ error: 'Jobibi was unable to draft a cover letter for this job description. Please check the text and try again.' }, 502);
     }
 
     const rawContent = choice.message?.content?.trim() ?? '';
     if (!rawContent) {
+      console.error('[draft-cover-letter] Empty content from model, finish_reason:', choice.finish_reason);
       return jsonResponse(
-        { error: `Model returned empty response (finish_reason: ${choice.finish_reason ?? 'unknown'})` },
+        { error: 'We could not generate your cover letter. Please try again.' },
         502,
       );
     }
@@ -262,12 +271,12 @@ Deno.serve(async (req) => {
         try {
           parsedContent = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
         } catch {
-          console.error('draft-cover-letter: Model returned non-JSON:', rawContent);
-          return jsonResponse({ error: 'Model returned non-JSON' }, 502);
+          console.error('[draft-cover-letter] Model returned non-JSON:', rawContent);
+          return jsonResponse({ error: 'Something went wrong while formatting your cover letter. Please try generating again.' }, 502);
         }
       } else {
-        console.error('draft-cover-letter: Model returned non-JSON:', rawContent);
-        return jsonResponse({ error: 'Model returned non-JSON' }, 502);
+        console.error('[draft-cover-letter] Model returned non-JSON:', rawContent);
+        return jsonResponse({ error: 'Something went wrong while formatting your cover letter. Please try generating again.' }, 502);
       }
     }
 
@@ -279,6 +288,7 @@ Deno.serve(async (req) => {
       200,
     );
   } catch (e) {
-    return jsonResponse({ error: String(e) }, 500);
+    console.error('[draft-cover-letter] unexpected error:', e);
+    return jsonResponse({ error: 'An unexpected error occurred while drafting your cover letter. Please try again.' }, 500);
   }
 });

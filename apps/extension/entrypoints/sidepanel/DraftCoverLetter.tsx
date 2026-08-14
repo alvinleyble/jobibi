@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { deriveOrigin } from '@jobibi/shared';
 import { supabase } from './supabase';
-import { describeIngestError } from './ingestError';
+import { describeIngestError, humanizeErrorMessage } from './ingestError';
 
 const MIN_JD_CHARS = 30;
 
@@ -33,7 +33,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
     setAcceptedDraft(null);
     const trimmed = jobDescription.trim();
     if (trimmed.length < MIN_JD_CHARS) {
-      setError(`Job description is too short (minimum ${MIN_JD_CHARS} characters).`);
+      setError(`Please paste a longer job description (at least ${MIN_JD_CHARS} characters) so Jobibi has enough context to draft your cover letter.`);
       return;
     }
     setGenerating(true);
@@ -43,7 +43,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
         { body: { jobDescription: trimmed } },
       );
       if (fnError || !data) {
-        setError(fnError ? await describeIngestError(fnError) : 'Failed to generate draft.');
+        setError(fnError ? await describeIngestError(fnError) : 'We could not generate your cover letter. Please try again.');
         return;
       }
       const text = data.draft ?? '';
@@ -54,7 +54,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
       // generated, whether later accepted or not. Keep the textarea cleared.
       setJobDescription('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanizeErrorMessage(e instanceof Error ? e.message : String(e)));
     } finally {
       setGenerating(false);
     }
@@ -75,7 +75,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
     setSuccess(null);
     const textToStore = editedDraft.trim();
     if (!textToStore) {
-      setError('Cover letter text is empty.');
+      setError('Cover letter cannot be empty. Please write or edit your cover letter before accepting.');
       return;
     }
     // D13 origin: any edit → user_edited (feeds voice profile);
@@ -96,7 +96,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
         { body: { text: textToStore, kind: 'cover_letter', origin } },
       );
       if (ingestError || !data) {
-        setError(ingestError ? await describeIngestError(ingestError) : 'Failed to store cover letter.');
+        setError(ingestError ? await describeIngestError(ingestError) : 'We could not save your cover letter to memory. Please try again.');
         return;
       }
 
@@ -110,7 +110,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
       setEditedDraft('');
       onStored();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanizeErrorMessage(e instanceof Error ? e.message : String(e)));
     } finally {
       setSaving(false);
     }

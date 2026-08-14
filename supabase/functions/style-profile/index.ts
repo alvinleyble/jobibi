@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return jsonResponse({ error: 'Missing Authorization' }, 401);
+    if (!authHeader) return jsonResponse({ error: 'Please sign in to update your style profile.' }, 401);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } },
     );
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
+    if (userErr || !user) return jsonResponse({ error: 'Your session has expired. Please sign in again.' }, 401);
 
     const body = await req.json().catch(() => ({}));
     const parsed = RequestSchema.safeParse(body);
@@ -136,7 +136,8 @@ Deno.serve(async (req) => {
     if (!apiKey) {
       // No key — silent fail, clear rebuilding so next trigger retries (no retry loop)
       await supabase.from('style_profile').update({ rebuilding: false, rebuilding_started_at: null }).eq('user_id', user.id);
-      return jsonResponse({ error: 'OPENAI_API_KEY not configured' }, 500);
+      console.error('[style-profile] OPENAI_API_KEY not configured');
+      return jsonResponse({ error: 'The style profile service is temporarily unavailable. Please try again in a few moments.' }, 500);
     }
 
     // Distillation: direct chat completion with the explicit length cap (invariant 8).
@@ -149,7 +150,7 @@ Deno.serve(async (req) => {
       // Silent fail — leave existing row as-is, clear rebuilding, let next trigger retry
       await supabase.from('style_profile').update({ rebuilding: false, rebuilding_started_at: null }).eq('user_id', user.id);
       console.error('[style-profile] distillation failed', e);
-      return jsonResponse({ ok: false, error: String(e), willRetryNextTrigger: true }, 200);
+      return jsonResponse({ ok: false, error: 'Could not generate style profile at this time.', willRetryNextTrigger: true }, 200);
     }
 
     if (!profileMd || !profileMd.trim()) {
@@ -183,7 +184,8 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ ok: true, profileMd: sanitized, corpusSize: currentCount }, 200);
   } catch (e) {
-    return jsonResponse({ error: String(e) }, 500);
+    console.error('[style-profile] unexpected error:', e);
+    return jsonResponse({ error: 'An unexpected error occurred while updating your style profile. Please try again.' }, 500);
   }
 });
 

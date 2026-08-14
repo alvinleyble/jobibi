@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import type { ExtractionResult, ExtractedQuestion } from '@jobibi/shared';
 import { SuggestCard } from './SuggestCard';
 import { supabase } from './supabase';
+import { humanizeErrorMessage } from './ingestError';
 
 function confidenceLabel(c: number): string {
   if (c >= 0.95) return 'high';
@@ -212,11 +213,12 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
                 } catch {}
                 const bodyError = body?.error;
                 const raw = body?.message ?? (typeof bodyError === 'string' ? bodyError : null);
-                const msg = raw ?? (error as unknown as { message?: string }).message ?? String(error);
+                const rawMsg = raw ?? (error as unknown as { message?: string }).message ?? String(error);
+                const friendlyMsg = humanizeErrorMessage(rawMsg);
                 if (body?.droppedSensitive) {
-                  setCaptureMsg(`Capture failed: ${msg} · ${body.droppedSensitive} not saved — please retry.`);
+                  setCaptureMsg(`Some answers were not saved because they contain sensitive details (${body.droppedSensitive} item${body.droppedSensitive === 1 ? '' : 's'}). Please confirm them in your sensitive fields.`);
                 } else {
-                  setCaptureMsg(`Capture failed: ${msg}`);
+                  setCaptureMsg(`Could not save application answers: ${friendlyMsg}`);
                 }
                 setTimeout(() => setCaptureMsg(null), 4000);
               } else if (data) {
@@ -225,8 +227,8 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
                 const droppedSensitive = (data as { droppedSensitive?: number }).droppedSensitive ?? 0;
                 const sensitiveRejections = (data as { sensitiveRejections?: Array<{ questionLabel: string; sensitiveKind: string | null }> }).sensitiveRejections ?? [];
                 if (inserted || dropped || droppedSensitive) {
-                  const parts = [`Capture: ${inserted} saved`];
-                  if (dropped) parts.push(`${dropped} mismatched dropped`);
+                  const parts = [`Saved ${inserted} answer${inserted === 1 ? '' : 's'} to memory`];
+                  if (dropped) parts.push(`${dropped} mismatched skipped`);
                   if (droppedSensitive) {
                     const kinds = sensitiveRejections.map((r) => r.sensitiveKind).filter(Boolean).join(', ') || 'sensitive';
                     parts.push(`${droppedSensitive} sensitive not saved — confirm via intake/sensitive card (${kinds})`);
@@ -236,7 +238,7 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
                 }
               }
             } catch (e) {
-              setCaptureMsg(`Capture error: ${String(e)}`);
+              setCaptureMsg('We could not save your application answers. Please check your connection.');
               setTimeout(() => setCaptureMsg(null), 4000);
             }
           })();

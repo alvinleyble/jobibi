@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { describeIngestError } from './ingestError';
+import { describeIngestError, humanizeErrorMessage } from './ingestError';
 import { supabase } from './supabase';
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -71,7 +71,7 @@ function UploadDocument({ userId, onIngested, title = 'Upload a document' }: Upl
     });
     if (uploadError) {
       setStatus('error');
-      setError(uploadError.message);
+      setError(humanizeErrorMessage(uploadError.message));
       return;
     }
 
@@ -84,7 +84,7 @@ function UploadDocument({ userId, onIngested, title = 'Upload a document' }: Upl
     );
     if (ingestError || !data) {
       setStatus('error');
-      setError(ingestError ? await describeIngestError(ingestError) : 'Ingestion failed.');
+      setError(ingestError ? await describeIngestError(ingestError) : 'We could not process your document. Please try uploading again.');
       return;
     }
 
@@ -106,7 +106,7 @@ function UploadDocument({ userId, onIngested, title = 'Upload a document' }: Upl
     );
     if (ingestError || !data) {
       setStatus('error');
-      setError(ingestError ? await describeIngestError(ingestError) : 'Ingestion failed.');
+      setError(ingestError ? await describeIngestError(ingestError) : 'We could not save your text to memory. Please try again.');
       return;
     }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../sidepanel/supabase';
+import { humanizeErrorMessage } from '../sidepanel/ingestError';
 
 type Status = 'exchanging' | 'done' | 'error';
 
@@ -11,14 +12,18 @@ function Callback() {
     const code = new URLSearchParams(window.location.search).get('code');
     if (!code) {
       setStatus('error');
-      setError('No sign-in code was found in this link.');
+      setError('No sign-in code was found in this link. Please request a new link from the Jobibi side panel.');
       return;
     }
 
     supabase.auth.exchangeCodeForSession(code).then(({ error: exchangeError }) => {
       if (exchangeError) {
         setStatus('error');
-        setError(exchangeError.message);
+        if (/expired|invalid/i.test(exchangeError.message)) {
+          setError('This sign-in link has expired or has already been used. Please request a new link from the Jobibi side panel.');
+        } else {
+          setError(humanizeErrorMessage(exchangeError.message));
+        }
         return;
       }
       setStatus('done');

@@ -37,7 +37,7 @@ export function Onboarding({ userId, userEmail, onComplete }: OnboardingProps) {
 
     if (ingestError || !data) {
       setStatus('error');
-      setError(ingestError ? await describeIngestError(ingestError) : 'Failed to save voice sample.');
+      setError(ingestError ? await describeIngestError(ingestError) : 'We could not save your career summary. Please try again or click Skip.');
       return;
     }
 

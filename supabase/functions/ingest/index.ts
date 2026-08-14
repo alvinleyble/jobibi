@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      return jsonResponse({ error: 'Missing Authorization header' }, 401);
+      return jsonResponse({ error: 'Please sign in to upload documents.' }, 401);
     }
 
     const supabase = createClient(
@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
       error: userError,
     } = await supabase.auth.getUser();
     if (userError || !user) {
-      return jsonResponse({ error: 'Not authenticated' }, 401);
+      return jsonResponse({ error: 'Your session has expired. Please sign in again.' }, 401);
     }
 
     const body = await req.json().catch(() => null);
@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
     } else if (isFileIngestRequest(body)) {
       kind = body.kind;
       if (!body.storagePath.startsWith(`${user.id}/`)) {
-        return jsonResponse({ error: 'storagePath must be under the caller\'s own folder' }, 403);
+        return jsonResponse({ error: 'You do not have permission to upload to this location.' }, 403);
       }
 
       format = detectFormat(body.mimeType, body.fileName);
@@ -133,7 +133,8 @@ Deno.serve(async (req) => {
         .from('documents')
         .download(body.storagePath);
       if (downloadError || !fileBlob) {
-        return jsonResponse({ error: `Could not read uploaded file: ${downloadError?.message ?? 'not found'}` }, 404);
+        console.error('[ingest] download error:', downloadError);
+        return jsonResponse({ error: 'We could not read the uploaded file. Please try uploading it again.' }, 404);
       }
       const bytes = new Uint8Array(await fileBlob.arrayBuffer());
 
@@ -146,14 +147,14 @@ Deno.serve(async (req) => {
         if (format === 'pdf') {
           return jsonResponse({ error: PDF_NO_SELECTABLE_TEXT_ERROR }, 422);
         }
-        return jsonResponse({ error: 'No extractable text found in this file' }, 422);
+        return jsonResponse({ error: 'We couldn\'t find any readable text in this file. Please make sure the file contains text (not just images or scans) and try again.' }, 422);
       }
       storagePath = body.storagePath;
       fileName = body.fileName;
       mimeType = body.mimeType;
     } else {
       return jsonResponse(
-        { error: 'Either { storagePath, kind, fileName, mimeType } or { text, kind } is required' },
+        { error: 'Please upload a file or paste text to save to your memory bank.' },
         400,
       );
     }
@@ -163,7 +164,7 @@ Deno.serve(async (req) => {
       if (format === 'pdf') {
         return jsonResponse({ error: PDF_NO_SELECTABLE_TEXT_ERROR }, 422);
       }
-      return jsonResponse({ error: 'No extractable text found in this file' }, 422);
+      return jsonResponse({ error: 'We couldn\'t find any readable text in this file. Please make sure the file contains text (not just images or scans) and try again.' }, 422);
     }
 
     const { data: document, error: documentError } = await supabase
@@ -181,7 +182,8 @@ Deno.serve(async (req) => {
       .select('id')
       .single();
     if (documentError || !document) {
-      return jsonResponse({ error: `Could not save document: ${documentError?.message}` }, 500);
+      console.error('[ingest] Could not save document:', documentError);
+      return jsonResponse({ error: 'We could not save your document. Please try again.' }, 500);
     }
 
     const embeddingSession = new Supabase.ai.Session('gte-small');
@@ -203,8 +205,9 @@ Deno.serve(async (req) => {
         throw new Error(`Could not save chunks: ${chunksError.message}`);
       }
     } catch (err) {
+      console.error('[ingest] Chunking / embedding failed:', err);
       await supabase.from('documents').delete().eq('id', document.id);
-      return jsonResponse({ error: (err as Error).message }, 500);
+      return jsonResponse({ error: 'We could not process your document for memory search. Please try uploading it again.' }, 500);
     }
 
     // S9: trigger only for qualifying documents (user_written / user_edited); accepted_verbatim and NULL-origin uploads do not count (D13)
@@ -216,6 +219,6 @@ Deno.serve(async (req) => {
     return jsonResponse({ documentId: document.id, chunkCount: chunkRows.length }, 200);
   } catch (err) {
     console.error('ingest failed', err);
-    return jsonResponse({ error: 'Unexpected error during ingestion' }, 500);
+    return jsonResponse({ error: 'An unexpected error occurred while processing your document. Please try again.' }, 500);
   }
 });
