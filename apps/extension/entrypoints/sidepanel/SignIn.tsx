@@ -1,7 +1,18 @@
 import { useState } from 'react';
 import { supabase } from './supabase';
+import { humanizeErrorMessage } from './ingestError';
 
 type Status = 'idle' | 'sending' | 'sent' | 'error';
+
+function humanizeAuthError(msg: string): string {
+  if (/rate limit|too many requests/i.test(msg)) {
+    return 'Too many sign-in attempts. Please wait a few minutes and try again.';
+  }
+  if (/invalid email|valid email/i.test(msg)) {
+    return 'Please enter a valid email address.';
+  }
+  return humanizeErrorMessage(msg);
+}
 
 function SignIn() {
   const [email, setEmail] = useState('');
@@ -23,7 +34,7 @@ function SignIn() {
 
     if (signInError) {
       setStatus('error');
-      setError(signInError.message);
+      setError(humanizeAuthError(signInError.message));
       return;
     }
     setStatus('sent');

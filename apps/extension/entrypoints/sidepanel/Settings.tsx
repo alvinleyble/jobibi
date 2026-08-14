@@ -7,6 +7,7 @@ import {
   type OutputLength,
 } from '@jobibi/shared';
 import { supabase } from './supabase';
+import { humanizeErrorMessage } from './ingestError';
 
 interface SettingsProps {
   userId: string;
@@ -93,13 +94,13 @@ export function Settings({ userId, userEmail, isBetaTester, onClose }: SettingsP
         .update({ output_length: newLength })
         .eq('id', userId);
       if (error) {
-        setLengthError(error.message);
+        setLengthError(humanizeErrorMessage(error.message));
       } else {
         setLengthSavedMessage('Saved ✓');
         setTimeout(() => setLengthSavedMessage(null), 2500);
       }
     } catch (e) {
-      setLengthError(e instanceof Error ? e.message : String(e));
+      setLengthError(humanizeErrorMessage(e instanceof Error ? e.message : String(e)));
     } finally {
       setSavingLength(false);
     }
@@ -160,7 +161,7 @@ export function Settings({ userId, userEmail, isBetaTester, onClose }: SettingsP
       setExportSuccess('Data exported successfully!');
       setTimeout(() => setExportSuccess(null), 3000);
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : String(err));
+      setExportError(humanizeErrorMessage(err instanceof Error ? err.message : String(err)));
     } finally {
       setExporting(false);
     }
@@ -204,7 +205,7 @@ export function Settings({ userId, userEmail, isBetaTester, onClose }: SettingsP
       // 3. Sign out
       await supabase.auth.signOut();
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : String(err));
+      setDeleteError(humanizeErrorMessage(err instanceof Error ? err.message : String(err)));
       setDeleting(false);
     }
   };

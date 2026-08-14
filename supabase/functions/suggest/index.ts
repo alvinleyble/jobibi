@@ -159,7 +159,7 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return jsonResponse({ error: 'Missing Authorization' }, 401);
+    if (!authHeader) return jsonResponse({ error: 'Please sign in to get suggestions.' }, 401);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -167,11 +167,11 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } },
     );
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
+    if (userErr || !user) return jsonResponse({ error: 'Your session has expired. Please sign in again.' }, 401);
 
     const body = await req.json();
     const parsed = SuggestRequestSchema.safeParse(body);
-    if (!parsed.success) return jsonResponse({ error: parsed.error.flatten() }, 400);
+    if (!parsed.success) return jsonResponse({ error: 'Please provide a valid question and job details to get a suggestion.' }, 400);
 
     // ── S12: Profile, Beta Status, and Daily Quota Enforcement ──
     const { data: profileRow } = await supabase
@@ -486,7 +486,10 @@ Deno.serve(async (req) => {
     }
 
     const apiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!apiKey) return jsonResponse({ error: 'OPENAI_API_KEY not configured' }, 500);
+    if (!apiKey) {
+      console.error('[suggest] OPENAI_API_KEY not configured');
+      return jsonResponse({ error: 'The suggestion service is temporarily unavailable. Please try again in a few moments.' }, 500);
+    }
 
     const isVideo = isVideoQuestion(parsed.data.question);
     const maxTokens = isVideo ? 600 : lengthConfig.maxTokens;
@@ -559,7 +562,8 @@ Deno.serve(async (req) => {
     });
     if (!resp.ok) {
       const text = await resp.text();
-      return jsonResponse({ error: `OpenAI error ${resp.status}: ${text.slice(0, 500)}` }, 502);
+      console.error('[suggest] OpenAI API error:', resp.status, text);
+      return jsonResponse({ error: 'We could not generate a suggestion right now. Please try again in a moment.' }, 502);
     }
     const data = await resp.json() as { choices: { message: { content: string } }[] };
     const content = data.choices?.[0]?.message?.content ?? '';
@@ -567,7 +571,8 @@ Deno.serve(async (req) => {
     try {
       parsedContent = JSON.parse(content);
     } catch {
-      return jsonResponse({ error: 'Model returned non-JSON' }, 502);
+      console.error('[suggest] Model returned non-JSON:', content);
+      return jsonResponse({ error: 'Something went wrong while formatting your suggestion. Please try again.' }, 502);
     }
     let answer = (parsedContent.answer ?? '').slice(0, maxAnswerChars);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
@@ -592,6 +597,7 @@ Deno.serve(async (req) => {
       200,
     );
   } catch (e) {
-    return jsonResponse({ error: String(e) }, 500);
+    console.error('[suggest] unexpected error:', e);
+    return jsonResponse({ error: 'An unexpected error occurred while generating a suggestion. Please try again.' }, 500);
   }
 });

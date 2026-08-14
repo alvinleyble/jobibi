@@ -2,10 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { PASTE_MAX_CHARS, PASTE_MIN_CHARS, pastedDocumentProvenance, validatePaste } from './paste';
 
 describe('validatePaste', () => {
-  it('rejects kinds other than cover_letter', () => {
-    const result = validatePaste('a'.repeat(PASTE_MIN_CHARS), 'resume');
+  it('rejects kinds other than cover_letter and resume', () => {
+    const result = validatePaste('a'.repeat(PASTE_MIN_CHARS), 'transcript');
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/only supported for/);
+  });
+
+  it('accepts resume paste for career highlights / voice seeding', () => {
+    const text = 'I am a software engineer with 5 years experience.';
+    const result = validatePaste(text, 'resume');
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe(text.trim());
   });
 
   it('rejects empty or whitespace-only paste', () => {

@@ -1,6 +1,13 @@
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
-import { detectFormat, extractDocxText, extractPdfText, extractText, extractTxtText } from './extract';
+import {
+  PDF_NO_SELECTABLE_TEXT_ERROR,
+  detectFormat,
+  extractDocxText,
+  extractPdfText,
+  extractText,
+  extractTxtText,
+} from './extract';
 
 describe('detectFormat', () => {
   it('detects by mime type first', () => {
@@ -59,12 +66,22 @@ describe('extractPdfText', () => {
     const text = await extractPdfText(pdfBytes);
     expect(text).toContain('Hello Jobibi PDF');
   });
+
+  it('throws a clear, actionable error when a PDF has no selectable text', async () => {
+    const pdfBytes = buildMinimalPdf('   ');
+    await expect(extractPdfText(pdfBytes)).rejects.toThrow(PDF_NO_SELECTABLE_TEXT_ERROR);
+  });
 });
 
 describe('extractText dispatcher', () => {
   it('routes txt through the plain decoder', async () => {
     const bytes = new TextEncoder().encode('Plain text resume.');
     expect(await extractText(bytes, 'txt')).toBe('Plain text resume.');
+  });
+
+  it('throws actionable error for PDF without selectable text', async () => {
+    const pdfBytes = buildMinimalPdf('');
+    await expect(extractText(pdfBytes, 'pdf')).rejects.toThrow(PDF_NO_SELECTABLE_TEXT_ERROR);
   });
 });
 

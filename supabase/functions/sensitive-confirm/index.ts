@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return jsonResponse({ error: 'Missing Authorization' }, 401);
+    if (!authHeader) return jsonResponse({ error: 'Please sign in to update your sensitive information.' }, 401);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -36,11 +36,11 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } },
     );
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
+    if (userErr || !user) return jsonResponse({ error: 'Your session has expired. Please sign in again.' }, 401);
 
     const body = await req.json().catch(() => null);
     const parsed = RequestSchema.safeParse(body);
-    if (!parsed.success) return jsonResponse({ error: parsed.error.flatten() }, 400);
+    if (!parsed.success) return jsonResponse({ error: 'Invalid sensitive information request.' }, 400);
 
     const { kind, action, value, factId } = parsed.data;
 
@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
           .maybeSingle();
         fact = data as unknown as SensitiveFactRow | null;
       }
-      if (!fact) return jsonResponse({ error: `No fact found for kind ${kind}` }, 404);
+      if (!fact) return jsonResponse({ error: 'We could not find an existing record for this field. Please provide an updated value.' }, 404);
 
       // Prefer INSERT path to stay within RLS INSERT-only (no update policy). Use UPDATE only if it actually affects a row.
       const nowIso = new Date().toISOString();
@@ -94,12 +94,15 @@ Deno.serve(async (req) => {
         })
         .select('id, kind, value, stated_at, confirmed_at')
         .single();
-      if (insErr || !inserted) return jsonResponse({ error: `Could not confirm: ${insErr?.message ?? 'unknown'}` }, 500);
+      if (insErr || !inserted) {
+        console.error('[sensitive-confirm] confirm insert failed:', insErr);
+        return jsonResponse({ error: 'We could not confirm this information right now. Please try again.' }, 500);
+      }
       return jsonResponse({ ok: true, ...(inserted as unknown as Record<string, unknown>), method: 'insert' }, 200);
     }
 
     // action === 'update'
-    if (!value || !value.trim()) return jsonResponse({ error: 'value required for update' }, 400);
+    if (!value || !value.trim()) return jsonResponse({ error: 'Please enter a valid value to update.' }, 400);
     const trimmed = value.trim();
     const nowIso = new Date().toISOString();
     const { data: inserted, error: insErr } = await supabase
@@ -113,9 +116,13 @@ Deno.serve(async (req) => {
       })
       .select('id, kind, value, stated_at, confirmed_at')
       .single();
-    if (insErr || !inserted) return jsonResponse({ error: `Could not update: ${insErr?.message ?? 'unknown'}` }, 500);
+    if (insErr || !inserted) {
+      console.error('[sensitive-confirm] update insert failed:', insErr);
+      return jsonResponse({ error: 'We could not save your updated information right now. Please try again.' }, 500);
+    }
     return jsonResponse({ ok: true, ...(inserted as unknown as Record<string, unknown>), method: 'insert' }, 200);
   } catch (e) {
-    return jsonResponse({ error: String(e) }, 500);
+    console.error('[sensitive-confirm] unexpected error:', e);
+    return jsonResponse({ error: 'An unexpected error occurred while saving your sensitive details. Please try again.' }, 500);
   }
 });

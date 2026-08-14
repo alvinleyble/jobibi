@@ -31,7 +31,7 @@ export async function extractText(bytes: Uint8Array, format: DocumentFormat): Pr
     case 'pdf':
       return await extractPdfText(bytes);
     default:
-      throw new Error(`Unsupported document format: ${format satisfies never}`);
+      throw new Error('Unsupported document format. Please upload a text-based PDF, DOCX, or TXT file.');
   }
 }
 
@@ -45,13 +45,20 @@ export function extractDocxText(bytes: Uint8Array): string {
   });
   const documentXml = files['word/document.xml'];
   if (!documentXml) {
-    throw new Error('Not a valid .docx file: word/document.xml is missing');
+    throw new Error('Could not read DOCX document content (word/document.xml is missing). Please make sure the file is a valid Word document.');
   }
   return extractTextFromDocumentXml(strFromU8(documentXml));
 }
 
+export const PDF_NO_SELECTABLE_TEXT_ERROR =
+  "We couldn't find any selectable text in this PDF. If your resume is a scanned image or photo, please upload a text-based PDF, DOCX, or copy-paste the text.";
+
 export async function extractPdfText(bytes: Uint8Array): Promise<string> {
   const pdf = await getDocumentProxy(bytes);
   const { text } = await extractPdfPages(pdf, { mergePages: true });
-  return text.trim();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error(PDF_NO_SELECTABLE_TEXT_ERROR);
+  }
+  return trimmed;
 }

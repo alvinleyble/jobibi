@@ -1,10 +1,9 @@
 import type { DocumentKind } from '../index.ts';
 
-// S3b: paste is only offered for cover letters — resumes and transcripts
-// stay upload-only (transcripts especially lose fidelity when pasted).
-export const PASTE_ALLOWED_KINDS: readonly DocumentKind[] = ['cover_letter'];
+// Paste is supported for cover letters and resume / career highlights / voice seeding.
+export const PASTE_ALLOWED_KINDS: readonly DocumentKind[] = ['cover_letter', 'resume'];
 
-export const PASTE_MIN_CHARS = 50;
+export const PASTE_MIN_CHARS = 20;
 export const PASTE_MAX_CHARS = 20000;
 
 export interface PasteValidationResult {
@@ -20,17 +19,17 @@ export interface PasteValidationResult {
  */
 export function validatePaste(text: string, kind: DocumentKind): PasteValidationResult {
   if (!PASTE_ALLOWED_KINDS.includes(kind)) {
-    return { ok: false, error: `Paste is only supported for: ${PASTE_ALLOWED_KINDS.join(', ')}` };
+    return { ok: false, error: `Pasting text is only supported for: ${PASTE_ALLOWED_KINDS.join(', ')}` };
   }
   const trimmed = text.trim();
   if (trimmed.length === 0) {
-    return { ok: false, error: 'Pasted text is empty' };
+    return { ok: false, error: 'Please enter or paste some text to continue.' };
   }
   if (trimmed.length < PASTE_MIN_CHARS) {
-    return { ok: false, error: `Pasted text is too short (minimum ${PASTE_MIN_CHARS} characters)` };
+    return { ok: false, error: `Your text is too short (minimum ${PASTE_MIN_CHARS} characters). Please provide a little more detail.` };
   }
   if (trimmed.length > PASTE_MAX_CHARS) {
-    return { ok: false, error: `Pasted text is too long (maximum ${PASTE_MAX_CHARS} characters)` };
+    return { ok: false, error: `Your text is too long (maximum ${PASTE_MAX_CHARS} characters). Please shorten it and try again.` };
   }
   return { ok: true, text: trimmed };
 }

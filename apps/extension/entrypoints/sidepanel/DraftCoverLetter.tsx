@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { deriveOrigin } from '@jobibi/shared';
 import { supabase } from './supabase';
-import { describeIngestError } from './ingestError';
+import { describeIngestError, humanizeErrorMessage } from './ingestError';
 
 const MIN_JD_CHARS = 30;
 
@@ -9,11 +9,19 @@ interface DraftCoverLetterProps {
   onStored: () => void;
 }
 
+interface AcceptedDraft {
+  text: string;
+  origin: string;
+  chunkCount: number;
+}
+
 function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
   const [jobDescription, setJobDescription] = useState('');
   const [draft, setDraft] = useState<string | null>(null);
   const [originalDraft, setOriginalDraft] = useState<string | null>(null);
   const [editedDraft, setEditedDraft] = useState('');
+  const [acceptedDraft, setAcceptedDraft] = useState<AcceptedDraft | null>(null);
+  const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,9 +30,10 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
   const handleGenerate = async () => {
     setError(null);
     setSuccess(null);
+    setAcceptedDraft(null);
     const trimmed = jobDescription.trim();
     if (trimmed.length < MIN_JD_CHARS) {
-      setError(`Job description is too short (minimum ${MIN_JD_CHARS} characters).`);
+      setError(`Please paste a longer job description (at least ${MIN_JD_CHARS} characters) so Jobibi has enough context to draft your cover letter.`);
       return;
     }
     setGenerating(true);
@@ -34,7 +43,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
         { body: { jobDescription: trimmed } },
       );
       if (fnError || !data) {
-        setError(fnError ? await describeIngestError(fnError) : 'Failed to generate draft.');
+        setError(fnError ? await describeIngestError(fnError) : 'We could not generate your cover letter. Please try again.');
         return;
       }
       const text = data.draft ?? '';
@@ -45,7 +54,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
       // generated, whether later accepted or not. Keep the textarea cleared.
       setJobDescription('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanizeErrorMessage(e instanceof Error ? e.message : String(e)));
     } finally {
       setGenerating(false);
     }
@@ -56,6 +65,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
     setDraft(null);
     setOriginalDraft(null);
     setEditedDraft('');
+    setAcceptedDraft(null);
     setError(null);
     setSuccess(null);
   };
@@ -65,7 +75,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
     setSuccess(null);
     const textToStore = editedDraft.trim();
     if (!textToStore) {
-      setError('Cover letter text is empty.');
+      setError('Cover letter cannot be empty. Please write or edit your cover letter before accepting.');
       return;
     }
     // D13 origin: any edit → user_edited (feeds voice profile);
@@ -86,23 +96,50 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
         { body: { text: textToStore, kind: 'cover_letter', origin } },
       );
       if (ingestError || !data) {
-        setError(ingestError ? await describeIngestError(ingestError) : 'Failed to store cover letter.');
+        setError(ingestError ? await describeIngestError(ingestError) : 'We could not save your cover letter to memory. Please try again.');
         return;
       }
 
-      setSuccess(`Cover letter saved (${origin}, ${data.chunkCount} chunk${data.chunkCount === 1 ? '' : 's'}).`);
+      setAcceptedDraft({
+        text: textToStore,
+        origin,
+        chunkCount: data.chunkCount,
+      });
       setDraft(null);
       setOriginalDraft(null);
       setEditedDraft('');
       onStored();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanizeErrorMessage(e instanceof Error ? e.message : String(e)));
     } finally {
       setSaving(false);
     }
   };
 
+  const handleCopy = async () => {
+    if (!acceptedDraft) return;
+    try {
+      await navigator.clipboard.writeText(acceptedDraft.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleDraftAgain = () => {
+    setAcceptedDraft(null);
+    setDraft(null);
+    setOriginalDraft(null);
+    setEditedDraft('');
+    setJobDescription('');
+    setCopied(false);
+    setError(null);
+    setSuccess(null);
+  };
+
   const hasDraft = draft !== null;
+  const isAccepted = acceptedDraft !== null;
 
   return (
     <div className="flex flex-col gap-2 rounded border border-slate-200 p-3">
@@ -111,7 +148,45 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
         Paste a job description — Jobibi drafts a cover letter from your own history. You can edit before accepting.
       </p>
 
-      {!hasDraft ? (
+      {isAccepted ? (
+        <div
+          data-testid="accepted-cover-letter-card"
+          className="flex flex-col gap-2 rounded border border-emerald-300 bg-emerald-50/60 p-3 text-xs text-slate-800"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 font-semibold text-emerald-800">
+              <span className="text-emerald-600">✓</span>
+              <span>Saved to Memory Bank</span>
+            </div>
+            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-mono text-emerald-800">
+              {acceptedDraft.origin} · {acceptedDraft.chunkCount} chunk{acceptedDraft.chunkCount === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          <div className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded border border-emerald-200/80 bg-white/80 p-2.5 text-xs text-slate-700 leading-relaxed">
+            {acceptedDraft.text}
+          </div>
+
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => void handleCopy()}
+              data-testid="copy-cover-letter-btn"
+              className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800 transition-colors"
+            >
+              {copied ? 'Copied ✓' : 'Copy cover letter'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDraftAgain}
+              data-testid="draft-again-btn"
+              className="rounded border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-emerald-50 transition-colors"
+            >
+              Draft Again
+            </button>
+          </div>
+        </div>
+      ) : !hasDraft ? (
         <div className="flex flex-col gap-2">
           <textarea
             className="min-h-24 rounded border border-slate-200 p-2 text-xs text-slate-600"

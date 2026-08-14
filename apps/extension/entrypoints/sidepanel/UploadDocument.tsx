@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { describeIngestError } from './ingestError';
+import { describeIngestError, humanizeErrorMessage } from './ingestError';
 import { supabase } from './supabase';
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -34,9 +34,10 @@ type InputMode = 'file' | 'paste';
 interface UploadDocumentProps {
   userId: string;
   onIngested: () => void;
+  title?: string;
 }
 
-function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
+function UploadDocument({ userId, onIngested, title = 'Upload a document' }: UploadDocumentProps) {
   const [kind, setKind] = useState<UploadPickerKind>('resume');
   const [mode, setMode] = useState<InputMode>('file');
   const [pasteText, setPasteText] = useState('');
@@ -48,9 +49,17 @@ function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
     setError(null);
     setLastResult(null);
 
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+    const allowedExtensions = ['pdf', 'docx', 'txt'];
+    if (!allowedExtensions.includes(ext)) {
+      setStatus('error');
+      setError('Unsupported file format. Please upload a text-based PDF, DOCX, or TXT file.');
+      return;
+    }
+
     if (file.size > MAX_FILE_BYTES) {
       setStatus('error');
-      setError('That file is larger than 20 MB.');
+      setError('That file is larger than 20 MB. Please upload a file under 20 MB.');
       return;
     }
 
@@ -62,7 +71,7 @@ function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
     });
     if (uploadError) {
       setStatus('error');
-      setError(uploadError.message);
+      setError(humanizeErrorMessage(uploadError.message));
       return;
     }
 
@@ -75,7 +84,7 @@ function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
     );
     if (ingestError || !data) {
       setStatus('error');
-      setError(ingestError ? await describeIngestError(ingestError) : 'Ingestion failed.');
+      setError(ingestError ? await describeIngestError(ingestError) : 'We could not process your document. Please try uploading again.');
       return;
     }
 
@@ -97,7 +106,7 @@ function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
     );
     if (ingestError || !data) {
       setStatus('error');
-      setError(ingestError ? await describeIngestError(ingestError) : 'Ingestion failed.');
+      setError(ingestError ? await describeIngestError(ingestError) : 'We could not save your text to memory. Please try again.');
       return;
     }
 
@@ -112,7 +121,7 @@ function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
 
   return (
     <div className="flex flex-col gap-2 rounded border border-slate-200 p-3">
-      <h2 className="text-sm font-semibold text-slate-900">Upload a document</h2>
+      <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
       <div className="flex gap-2">
         {UPLOAD_PICKER_KINDS.map((k) => (
           <label key={k} className="flex items-center gap-1 text-xs text-slate-600">

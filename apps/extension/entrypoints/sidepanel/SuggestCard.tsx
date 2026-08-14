@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { AUTOFILL_CONFIDENCE_THRESHOLD, isVideoQuestion } from '@jobibi/shared';
 import type { ExtractedQuestion, ExtractionResult } from '@jobibi/shared';
+import { humanizeErrorMessage } from './ingestError';
 
 interface SuggestState {
   outcome?: 'draft' | 'ask' | 'refuse' | 'confirm';
@@ -35,12 +36,13 @@ interface SuggestState {
 }
 
 function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return humanizeErrorMessage(err instanceof Error ? err.message : String(err));
 }
 
 type SuggestErrorBody = {
   error?: unknown;
   code?: string;
+  message?: string;
   sensitiveKind?: string;
   sensitiveVia?: string;
   sensitiveFact?: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null;
@@ -65,7 +67,12 @@ async function readSuggestErrorBody(err: unknown): Promise<SuggestErrorBody | nu
 }
 
 function messageFromSuggestErrorBody(body: SuggestErrorBody | null, err: unknown): string {
-  if (body?.error) return typeof body.error === 'string' ? body.error : JSON.stringify(body.error);
+  if (body?.message && typeof body.message === 'string') return humanizeErrorMessage(body.message);
+  if (body?.error) {
+    return typeof body.error === 'string'
+      ? humanizeErrorMessage(body.error)
+      : 'Something went wrong. Please try again.';
+  }
   return getErrorMessage(err);
 }
 
@@ -183,11 +190,11 @@ export function SuggestCard({
   const onSubmitGap = async () => {
     const trimmed = gapInput.trim();
     if (!trimmed) {
-      setGapError('Please write a short answer.');
+      setGapError('Please write a short answer to help Jobibi draft a response.');
       return;
     }
     if (trimmed.length < 3) {
-      setGapError('Answer is too short.');
+      setGapError('Your answer is a bit too short. Please provide a little more detail.');
       return;
     }
     setGapLoading(true);
@@ -276,11 +283,11 @@ export function SuggestCard({
   const onUpdate = async () => {
     const trimmed = updateValue.trim();
     if (!trimmed) {
-      setConfirmError('Please enter a value.');
+      setConfirmError('Please enter a value before saving.');
       return;
     }
     if (!state.sensitiveKind) {
-      setConfirmError('Could not verify this field — please try Suggest again.');
+      setConfirmError('We couldn\'t verify this field right now. Please try clicking Suggest again.');
       return;
     }
     setConfirmLoading(true);
@@ -316,11 +323,11 @@ export function SuggestCard({
   const onManualSubmit = async () => {
     const trimmed = manualInput.trim();
     if (!trimmed) {
-      setManualError('Please write a short answer.');
+      setManualError('Please write an answer before saving to memory.');
       return;
     }
     if (trimmed.length < 3) {
-      setManualError('Answer is too short.');
+      setManualError('Your answer is a bit too short. Please provide a little more detail.');
       return;
     }
     setManualLoading(true);
@@ -377,7 +384,7 @@ export function SuggestCard({
       const targetTab = validCurrent || validActive || validTabs.find((t) => /jobstreet|seek|jobsdb|linkedin|indeed/i.test(t.url ?? '')) || validTabs[0] || currentTabs[0];
       const tabId = targetTab?.id;
       if (tabId == null) {
-        setInsertError('Active tab not found');
+        setInsertError('Could not find an active job application tab. Please make sure the job application page is open and try again.');
         setInserting(false);
         return;
       }
@@ -394,7 +401,7 @@ export function SuggestCard({
         })
         .catch((e) => ({
           ok: false,
-          error: e instanceof Error ? e.message : 'Could not reach page content script',
+          error: e instanceof Error ? humanizeErrorMessage(e.message) : 'Could not communicate with the application page. Please refresh the page and try again.',
         }))) as { ok?: boolean; error?: string } | null;
 
       if (response?.ok) {
@@ -406,13 +413,13 @@ export function SuggestCard({
           setInserted(false);
         }, 2500);
       } else {
-        setInsertError(response?.error || 'Failed to insert into form field');
+        setInsertError(response?.error ? humanizeErrorMessage(response.error) : 'Could not insert into the form field. You can copy and paste your answer manually.');
         setTimeout(() => {
           setInsertError(null);
         }, 4000);
       }
     } catch (e) {
-      setInsertError(e instanceof Error ? e.message : String(e));
+      setInsertError(humanizeErrorMessage(e instanceof Error ? e.message : String(e)));
       setTimeout(() => {
         setInsertError(null);
       }, 4000);

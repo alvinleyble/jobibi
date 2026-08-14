@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return jsonResponse({ error: 'Missing Authorization' }, 401);
+    if (!authHeader) return jsonResponse({ error: 'Please sign in to save application answers.' }, 401);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -70,11 +70,11 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } },
     );
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
+    if (userErr || !user) return jsonResponse({ error: 'Your session has expired. Please sign in again.' }, 401);
 
     const body = await req.json().catch(() => null);
     const parsed = CaptureRequestSchema.safeParse(body);
-    if (!parsed.success) return jsonResponse({ error: parsed.error.flatten() }, 400);
+    if (!parsed.success) return jsonResponse({ error: 'Please provide valid application answers to save.' }, 400);
 
     const { answers, application, jobContext, mismatches } = parsed.data;
 
@@ -166,7 +166,7 @@ Deno.serve(async (req) => {
         {
           error: 'sensitive_detected',
           code: 'sensitive_rejected',
-          message: 'Could not verify sensitivity — capture aborted, please retry.',
+          message: 'We could not verify if any answers contain sensitive details. Please try saving again.',
           sensitiveKind: null,
           sensitiveVia: null,
           sensitiveFact: null,
@@ -363,6 +363,7 @@ Deno.serve(async (req) => {
       mismatchesLogged: mismatches?.length ?? 0,
     }, 200);
   } catch (e) {
-    return jsonResponse({ error: String(e) }, 500);
+    console.error('[capture] unexpected error:', e);
+    return jsonResponse({ error: 'An unexpected error occurred while saving your application answers. Please try again.' }, 500);
   }
 });

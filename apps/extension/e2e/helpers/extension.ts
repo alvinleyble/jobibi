@@ -39,6 +39,7 @@ export interface SeedSessionOptions {
   outputLength?: 'short' | 'medium' | 'long';
   email?: string;
   userId?: string;
+  onboardingCompleted?: boolean;
 }
 
 export async function launchExtensionContext(options?: {
@@ -127,6 +128,7 @@ export async function seedSession(
   const isBeta = options.isBetaTester ?? true;
   const email = options.email || 'beta-tester@example.com';
   const userId = options.userId || 'test-user-e2e-id';
+  const onboardingCompleted = options.onboardingCompleted ?? true;
 
   const mockSession = {
     access_token: 'mock-access-token-e2e',
@@ -190,14 +192,17 @@ export async function seedSession(
 
   // Inject session into chrome.storage.local
   await sidepanelPage.evaluate(
-    ({ session }) => {
+    ({ session, onboardingCompleted, userId }) => {
       return new Promise<void>((resolve) => {
         const sessionStr = JSON.stringify(session);
-        const data: Record<string, string> = {
+        const data: Record<string, any> = {
           'sb-kbpojtjemftqwgmrnbdq-auth-token': sessionStr,
           'sb-127-auth-token': sessionStr,
           'sb-localhost-auth-token': sessionStr,
         };
+        if (onboardingCompleted) {
+          data[`jobibi_onboarding_completed_${userId}`] = true;
+        }
         const chromeObj = (globalThis as unknown as { chrome?: { storage?: { local?: { set: (d: any, cb: () => void) => void } } } }).chrome;
         if (chromeObj?.storage?.local) {
           chromeObj.storage.local.set(data, () => resolve());
@@ -206,7 +211,7 @@ export async function seedSession(
         }
       });
     },
-    { session: mockSession },
+    { session: mockSession, onboardingCompleted, userId },
   );
 
   // Allow storage watcher in useSession to trigger

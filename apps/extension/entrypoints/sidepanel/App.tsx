@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { APP_NAME } from '@jobibi/shared';
 import { useSession } from './useSession';
 import SignIn from './SignIn';
+import { Onboarding } from './Onboarding';
 import { supabase } from './supabase';
 import JobStreetQuestions from './JobStreetQuestions';
 import MemoryBank from './MemoryBank';
@@ -10,8 +11,76 @@ import { Settings } from './Settings';
 function App() {
   const { session, loading, isBetaTester } = useSession();
   const [showSettings, setShowSettings] = useState(false);
+  const [isOnboarded, setIsOnboarded] = useState<boolean | null>(null);
 
-  if (loading) {
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setIsOnboarded(null);
+      return;
+    }
+
+    const checkOnboardingStatus = async () => {
+      const userId = session.user.id;
+      const key = `jobibi_onboarding_completed_${userId}`;
+
+      // Check local / browser storage
+      let localDone = false;
+      try {
+        const stored = await browser.storage.local.get(key);
+        if (stored[key]) {
+          localDone = true;
+        }
+      } catch {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem(key) === 'true') {
+          localDone = true;
+        }
+      }
+
+      if (localDone) {
+        setIsOnboarded(true);
+        return;
+      }
+
+      // Check if user has uploaded documents in Supabase
+      try {
+        const { data, error } = await supabase
+          .from('documents')
+          .select('id')
+          .eq('user_id', userId)
+          .limit(1);
+
+        if (!error && data && data.length > 0) {
+          setIsOnboarded(true);
+          try {
+            await browser.storage.local.set({ [key]: true });
+          } catch {
+            localStorage?.setItem(key, 'true');
+          }
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      setIsOnboarded(false);
+    };
+
+    void checkOnboardingStatus();
+  }, [session?.user?.id]);
+
+  const handleOnboardingComplete = async () => {
+    if (session?.user?.id) {
+      const key = `jobibi_onboarding_completed_${session.user.id}`;
+      try {
+        await browser.storage.local.set({ [key]: true });
+      } catch {
+        localStorage?.setItem(key, 'true');
+      }
+    }
+    setIsOnboarded(true);
+  };
+
+  if (loading || (session && isOnboarded === null)) {
     return (
       <div className="flex h-screen items-center justify-center bg-white">
         <p className="text-sm text-slate-500">Loading…</p>
@@ -21,6 +90,16 @@ function App() {
 
   if (!session) {
     return <SignIn />;
+  }
+
+  if (!isOnboarded) {
+    return (
+      <Onboarding
+        userId={session.user.id}
+        userEmail={session.user.email ?? ''}
+        onComplete={handleOnboardingComplete}
+      />
+    );
   }
 
   return (

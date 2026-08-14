@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return jsonResponse({ error: 'Missing Authorization' }, 401);
+    if (!authHeader) return jsonResponse({ error: 'Please sign in to submit an answer.' }, 401);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -61,16 +61,16 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } },
     );
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
+    if (userErr || !user) return jsonResponse({ error: 'Your session has expired. Please sign in again.' }, 401);
 
     const body = await req.json().catch(() => null);
     const parsed = GapAnswerRequestSchema.safeParse(body);
-    if (!parsed.success) return jsonResponse({ error: parsed.error.flatten() }, 400);
+    if (!parsed.success) return jsonResponse({ error: 'Please provide a valid answer to continue.' }, 400);
 
     const { originalQuestion, gapQuestion, answer, jobContext, anchoredChunkId, applicationId } = parsed.data;
     const questionNorm = normalizeQuestion(originalQuestion);
     const trimmedAnswer = answer.trim();
-    if (!trimmedAnswer) return jsonResponse({ error: 'Answer must not be empty' }, 400);
+    if (!trimmedAnswer) return jsonResponse({ error: 'Please write an answer before submitting.' }, 400);
 
     // S7A sensitive storage gate — reject-and-redirect, never silent refile (D17)
     // Check answer + question texts against typed sensitive_facts before any insert.
@@ -131,7 +131,7 @@ Deno.serve(async (req) => {
         {
           error: 'sensitive_detected',
           code: 'sensitive_rejected',
-          message: 'Could not verify sensitivity — please use the sensitive field flow.',
+          message: 'We could not verify if this information is sensitive. Please confirm or update it in your sensitive fields.',
           sensitiveKind: null,
           sensitiveVia: null,
           sensitiveFact: null,
@@ -159,7 +159,8 @@ Deno.serve(async (req) => {
       .select('id')
       .single();
     if (gapErr || !gapRow) {
-      return jsonResponse({ error: `Could not store gap answer: ${gapErr?.message ?? 'unknown'}` }, 500);
+      console.error('[gap-answer] Could not store gap answer:', gapErr);
+      return jsonResponse({ error: 'We could not save your follow-up answer. Please try again.' }, 500);
     }
 
     let embedding: number[] | null = null;
@@ -206,7 +207,10 @@ Deno.serve(async (req) => {
     }
 
     const apiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!apiKey) return jsonResponse({ error: 'OPENAI_API_KEY not configured' }, 500);
+    if (!apiKey) {
+      console.error('[gap-answer] OPENAI_API_KEY not configured');
+      return jsonResponse({ error: 'The drafting service is temporarily unavailable. Please try again in a few moments.' }, 500);
+    }
 
     let otherSnippets: string[] = [];
     try {
@@ -309,7 +313,8 @@ Deno.serve(async (req) => {
     });
     if (!resp.ok) {
       const text = await resp.text();
-      return jsonResponse({ error: `OpenAI error ${resp.status}: ${text.slice(0, 500)}` }, 502);
+      console.error('[gap-answer] OpenAI API error:', resp.status, text);
+      return jsonResponse({ error: 'We could not generate your answer draft right now. Please try again in a moment.' }, 502);
     }
     const data = (await resp.json()) as { choices: { message: { content: string } }[] };
     const content = data.choices?.[0]?.message?.content ?? '';
@@ -317,7 +322,8 @@ Deno.serve(async (req) => {
     try {
       parsedContent = JSON.parse(content);
     } catch {
-      return jsonResponse({ error: 'Model returned non-JSON' }, 502);
+      console.error('[gap-answer] Model returned non-JSON:', content);
+      return jsonResponse({ error: 'Something went wrong while formatting your draft. Please try submitting again.' }, 502);
     }
     let draftedAnswer = (parsedContent.answer ?? '').slice(0, maxAnswerChars);
     if (draftedAnswer.length > maxAnswerChars) draftedAnswer = draftedAnswer.slice(0, maxAnswerChars);
@@ -339,6 +345,7 @@ Deno.serve(async (req) => {
       200,
     );
   } catch (e) {
-    return jsonResponse({ error: String(e) }, 500);
+    console.error('[gap-answer] unexpected error:', e);
+    return jsonResponse({ error: 'An unexpected error occurred while saving your answer. Please try again.' }, 500);
   }
 });
