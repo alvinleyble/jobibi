@@ -5,6 +5,14 @@ export const APP_NAME = 'Jobibi';
 // ./ingestion/*.ts directly). Barrel-exporting them would drag unpdf/fflate
 // into the browser bundle for a codepath that never runs there.
 
+// DOCUMENT_KINDS: S8 removed "Upload Cover Letter" and "Upload Transcript"
+// from the UploadDocument picker, but both values stay valid here and in
+// the DB CHECK constraint
+// (supabase/migrations/20260810001000_memory_bank_tables.sql:16) —
+// `cover_letter` is still the storage kind for accepted drafts from the
+// Draft Cover Letter facility, and `transcript` is kept-but-unreachable so
+// the removal stays UI-only with no constraint/type narrowing. Do not
+// narrow this list without also handling the DB constraint and S8 flow.
 export const DOCUMENT_KINDS = ['resume', 'cover_letter', 'transcript'] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 

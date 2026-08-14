@@ -1,19 +1,32 @@
 import { useState } from 'react';
-import { DOCUMENT_KINDS, type DocumentKind } from '@jobibi/shared';
 import { describeIngestError } from './ingestError';
 import { supabase } from './supabase';
 
-const KIND_LABELS: Record<DocumentKind, string> = {
-  resume: 'Resume',
-  cover_letter: 'Cover letter',
-  transcript: 'Transcript',
-};
-
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
-// S3b: paste is only offered for cover letters — resumes and transcripts
-// stay upload-only (transcripts especially lose fidelity when pasted).
-const PASTE_ENABLED_KINDS: readonly DocumentKind[] = ['cover_letter'];
+// S8: "Upload Cover Letter" and "Upload Transcript" removed from the picker.
+// - cover_letter stays a valid DocumentKind + DB CHECK value because accepted
+//   drafts from the Draft Cover Letter facility still store under that kind
+//   via the paste-ingestion path (ingest { text, kind: 'cover_letter' }).
+// - transcript stays valid-but-unreachable in both the DocumentKind type
+//   (packages/shared/src/index.ts) and the DB CHECK constraint
+//   (supabase/migrations/20260810001000_memory_bank_tables.sql:16) so that
+//   constraint/type narrowing is not needed; this keeps the removal UI-only.
+//   See docs/build/v0.1.md S8/S8a.
+const UPLOAD_PICKER_KINDS = ['resume'] as const;
+type UploadPickerKind = (typeof UPLOAD_PICKER_KINDS)[number];
+
+const KIND_LABELS: Record<UploadPickerKind, string> = {
+  resume: 'Resume',
+};
+
+// S3b: paste was only offered for cover letters — resumes and transcripts
+// stayed upload-only (transcripts especially lose fidelity when pasted).
+// S8 removed both cover_letter and transcript from the picker, so no kind
+// in the picker currently offers paste. Kept as an empty allowlist so a
+// future kind can re-enable paste without reintroducing UI for the removed
+// kinds.
+const PASTE_ENABLED_KINDS: readonly UploadPickerKind[] = [];
 
 type Status = 'idle' | 'uploading' | 'ingesting' | 'error';
 type InputMode = 'file' | 'paste';
@@ -24,7 +37,7 @@ interface UploadDocumentProps {
 }
 
 function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
-  const [kind, setKind] = useState<DocumentKind>('resume');
+  const [kind, setKind] = useState<UploadPickerKind>('resume');
   const [mode, setMode] = useState<InputMode>('file');
   const [pasteText, setPasteText] = useState('');
   const [status, setStatus] = useState<Status>('idle');
@@ -101,7 +114,7 @@ function UploadDocument({ userId, onIngested }: UploadDocumentProps) {
     <div className="flex flex-col gap-2 rounded border border-slate-200 p-3">
       <h2 className="text-sm font-semibold text-slate-900">Upload a document</h2>
       <div className="flex gap-2">
-        {DOCUMENT_KINDS.map((k) => (
+        {UPLOAD_PICKER_KINDS.map((k) => (
           <label key={k} className="flex items-center gap-1 text-xs text-slate-600">
             <input
               type="radio"

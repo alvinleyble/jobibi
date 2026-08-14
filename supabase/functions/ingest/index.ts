@@ -27,6 +27,10 @@ interface FileIngestRequest {
 interface PasteIngestRequest {
   text: string;
   kind: DocumentKind;
+  // S8: Draft Cover Letter — D13 origin for accepted drafts. Only meaningful
+  // for kind='cover_letter' stored drafts; NULL for other kinds and for
+  // pre-S8 manual pastes.
+  origin?: 'user_written' | 'user_edited' | 'accepted_verbatim' | null;
 }
 
 function jsonResponse(body: unknown, status: number) {
@@ -90,6 +94,7 @@ Deno.serve(async (req) => {
     let fileName: string;
     let mimeType: string;
     let kind: DocumentKind;
+    let origin: 'user_written' | 'user_edited' | 'accepted_verbatim' | null = null;
 
     if (isPasteIngestRequest(body)) {
       kind = body.kind;
@@ -102,6 +107,10 @@ Deno.serve(async (req) => {
       storagePath = provenance.storagePath;
       fileName = provenance.fileName;
       mimeType = provenance.mimeType;
+      // S8 D13: persist origin for Draft Cover Letter accepted drafts
+      if (body.origin && ['user_written', 'user_edited', 'accepted_verbatim'].includes(body.origin)) {
+        origin = body.origin as typeof origin;
+      }
     } else if (isFileIngestRequest(body)) {
       kind = body.kind;
       if (!body.storagePath.startsWith(`${user.id}/`)) {
@@ -154,6 +163,7 @@ Deno.serve(async (req) => {
         storage_path: storagePath,
         extracted_text: text,
         parsed_at: new Date().toISOString(),
+        ...(origin ? { origin } : {}),
       })
       .select('id')
       .single();
