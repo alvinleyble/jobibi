@@ -9,7 +9,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { DOCUMENT_KINDS, type DocumentKind } from '../../../packages/shared/src/index.ts';
 import { chunkText } from '../../../packages/shared/src/ingestion/chunk.ts';
-import { detectFormat, extractText } from '../../../packages/shared/src/ingestion/extract.ts';
+import {
+  DocumentFormat,
+  PDF_NO_SELECTABLE_TEXT_ERROR,
+  detectFormat,
+  extractText,
+} from '../../../packages/shared/src/ingestion/extract.ts';
 import { pastedDocumentProvenance, validatePaste } from '../../../packages/shared/src/ingestion/paste.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
@@ -95,6 +100,7 @@ Deno.serve(async (req) => {
     let fileName: string;
     let mimeType: string;
     let kind: DocumentKind;
+    let format: DocumentFormat | null = null;
     let origin: 'user_written' | 'user_edited' | 'accepted_verbatim' | null = null;
 
     if (isPasteIngestRequest(body)) {
@@ -118,9 +124,9 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: 'storagePath must be under the caller\'s own folder' }, 403);
       }
 
-      const format = detectFormat(body.mimeType, body.fileName);
+      format = detectFormat(body.mimeType, body.fileName);
       if (!format) {
-        return jsonResponse({ error: `Unsupported file type: ${body.mimeType}` }, 400);
+        return jsonResponse({ error: 'Unsupported file format. Please upload a text-based PDF, DOCX, or TXT file.' }, 400);
       }
 
       const { data: fileBlob, error: downloadError } = await supabase.storage
@@ -134,9 +140,12 @@ Deno.serve(async (req) => {
       try {
         text = await extractText(bytes, format);
       } catch (err) {
-        return jsonResponse({ error: `Could not extract text: ${(err as Error).message}` }, 422);
+        return jsonResponse({ error: (err as Error).message }, 422);
       }
       if (!text.trim()) {
+        if (format === 'pdf') {
+          return jsonResponse({ error: PDF_NO_SELECTABLE_TEXT_ERROR }, 422);
+        }
         return jsonResponse({ error: 'No extractable text found in this file' }, 422);
       }
       storagePath = body.storagePath;
@@ -151,6 +160,9 @@ Deno.serve(async (req) => {
 
     const chunks = chunkText(text);
     if (chunks.length === 0) {
+      if (format === 'pdf') {
+        return jsonResponse({ error: PDF_NO_SELECTABLE_TEXT_ERROR }, 422);
+      }
       return jsonResponse({ error: 'No extractable text found in this file' }, 422);
     }
 

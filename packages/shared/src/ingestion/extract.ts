@@ -50,8 +50,15 @@ export function extractDocxText(bytes: Uint8Array): string {
   return extractTextFromDocumentXml(strFromU8(documentXml));
 }
 
+export const PDF_NO_SELECTABLE_TEXT_ERROR =
+  "We couldn't find any selectable text in this PDF. If your resume is a scanned image or photo, please upload a text-based PDF, DOCX, or copy-paste the text.";
+
 export async function extractPdfText(bytes: Uint8Array): Promise<string> {
   const pdf = await getDocumentProxy(bytes);
   const { text } = await extractPdfPages(pdf, { mergePages: true });
-  return text.trim();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error(PDF_NO_SELECTABLE_TEXT_ERROR);
+  }
+  return trimmed;
 }

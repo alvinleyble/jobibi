@@ -3,7 +3,6 @@ import { SENSITIVE_FACT_KINDS, type DocumentKind, type SensitiveFactKind } from 
 import { supabase } from './supabase';
 import UploadDocument from './UploadDocument';
 import DraftCoverLetter from './DraftCoverLetter';
-import Intake from './Intake';
 
 interface DocumentRow {
   id: string;
@@ -117,7 +116,6 @@ function MemoryBank({ userId }: MemoryBankProps) {
           job site. Paste-always (no LinkedIn auto-fill) keeps S8 independent
           of S7; LinkedIn auto-fill is a separable future follow-up. */}
       <DraftCoverLetter onStored={refresh} />
-      <Intake userId={userId} onSaved={refresh} />
 
       {/* Stored Q&A Answers with Per-Answer Deletion (D12) */}
       <div className="flex flex-col gap-2 rounded border border-slate-200 p-3 bg-white">

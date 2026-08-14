@@ -11,6 +11,15 @@ describe('describeIngestError', () => {
     expect(message).toBe('No extractable text found in this file');
   });
 
+  it('surfaces actionable unextractable PDF text error', async () => {
+    const pdfMsg = "We couldn't find any selectable text in this PDF. If your resume is a scanned image or photo, please upload a text-based PDF, DOCX, or copy-paste the text.";
+    const response = new Response(JSON.stringify({ error: pdfMsg }), {
+      status: 422,
+    });
+    const message = await describeIngestError(new FunctionsHttpError(response));
+    expect(message).toBe(pdfMsg);
+  });
+
   it('falls back to the generic message when the response body has no error field', async () => {
     const response = new Response(JSON.stringify({ unrelated: true }), { status: 500 });
     const message = await describeIngestError(new FunctionsHttpError(response));
