@@ -100,10 +100,11 @@ Deno.serve(async (req) => {
     // No gate after this — always attempt to draft (S8 item 4).
     type MemRow = { id: string | null; text: string; embedding: number[] | null };
     let memoryRows: MemRow[] = [];
+    let jdEmbedding: number[] | null = null;
 
     // Try vector search first (match_memory_chunks RPC), fall back to keyword
     try {
-      const jdEmbedding = await new Supabase.ai.Session('gte-small').run(jobDescription, {
+      jdEmbedding = await new Supabase.ai.Session('gte-small').run(jobDescription, {
         mean_pool: true,
         normalize: true,
       });
@@ -127,14 +128,6 @@ Deno.serve(async (req) => {
       const all = (chunks as unknown as MemRow[] | null) ?? [];
       all.sort((a, b) => keywordOverlap(jobDescription, b.text) - keywordOverlap(jobDescription, a.text));
       memoryRows = all.slice(0, 8).map((r) => ({ id: (r as unknown as { id: string }).id ?? null, text: r.text, embedding: r.embedding }));
-    }
-
-    // Score and pick top snippets for grounding
-    let jdEmbedding: number[] | null = null;
-    try {
-      jdEmbedding = await new Supabase.ai.Session('gte-small').run(jobDescription, { mean_pool: true, normalize: true });
-    } catch {
-      // stays null — scoring falls back to keyword overlap
     }
 
     const sanitize = (n: number) => (Number.isFinite(n) ? n : 0);
@@ -177,11 +170,11 @@ Deno.serve(async (req) => {
       if (md) styleProfileMd = md.slice(0, 2000);
     } catch { /* omit on error */ }
     const styleBlock = styleProfileMd ? `Style profile — how the user writes (follow this voice):\n${styleProfileMd}\n\n` : '';
-    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft a cover letter grounded ONLY in the user's retrieved history snippets below. Never invent facts, experiences, or skills not in the snippets. Address the job described, highlighting the user's relevant experience. Keep the letter ${lengthConfig.wordRange} (≤${lengthConfig.maxChars} chars). Use a professional cover letter structure (greeting, body paragraphs, closing). Do not include salary, notice period, work authorization, or location expectations.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
+    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft a cover letter tailored to the job description below, highlighting the user's relevant experience grounded in the history snippets. Never invent specific unmentioned employers or credentials. If snippets are minimal or absent, draft a polished, customizable cover letter aligning with the job requirements that the user can personalize. Keep the letter ${lengthConfig.wordRange} (≤${lengthConfig.maxChars} chars). Use a professional cover letter structure (greeting, body paragraphs, closing). Do not include salary, notice period, work authorization, or location expectations.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
 
     const payload = {
       model: 'gpt-5.6-luna',
-      max_completion_tokens: Math.max(600, lengthConfig.maxTokens + 300),
+      max_completion_tokens: Math.max(800, lengthConfig.maxTokens + 400),
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -214,7 +207,7 @@ Deno.serve(async (req) => {
         { role: 'system', content: system },
         {
           role: 'user',
-          content: `Job description:\n${jobDescription.slice(0, MAX_JOB_DESCRIPTION_CHARS)}\n\nUser's history snippets:\n${snippets || '(no snippets — draft a general but truthful opening the user can edit)'}\n\nDraft a cover letter (${lengthConfig.wordRange}, ≤${lengthConfig.maxChars} chars) grounded only in snippets.`,
+          content: `Job description:\n${jobDescription.slice(0, MAX_JOB_DESCRIPTION_CHARS)}\n\nUser's history snippets:\n${snippets || '(no specific snippets available — draft a strong opening and body tailored to the job requirements that the user can personalize)'}\n\nDraft a cover letter (${lengthConfig.wordRange}, ≤${lengthConfig.maxChars} chars).`,
         },
       ],
     };
@@ -228,15 +221,56 @@ Deno.serve(async (req) => {
       const text = await resp.text();
       return jsonResponse({ error: `OpenAI error ${resp.status}: ${text.slice(0, 500)}` }, 502);
     }
-    const data = await resp.json() as { choices: { message: { content: string } }[] };
-    const content = data.choices?.[0]?.message?.content ?? '';
-    let parsedContent: { draft: string; sources: { kind: string; label: string; ref: string }[] };
-    try {
-      parsedContent = JSON.parse(content);
-    } catch {
-      console.error('draft-cover-letter: Model returned non-JSON:', content);
-      return jsonResponse({ error: 'Model returned non-JSON' }, 502);
+    const data = (await resp.json()) as {
+      choices?: {
+        message?: { content?: string | null; refusal?: string | null };
+        finish_reason?: string | null;
+      }[];
+    };
+
+    const choice = data.choices?.[0];
+    if (!choice) {
+      return jsonResponse({ error: 'No response choices returned by model' }, 502);
     }
+
+    if (choice.message?.refusal) {
+      return jsonResponse({ error: `Model refused to draft cover letter: ${choice.message.refusal}` }, 502);
+    }
+
+    const rawContent = choice.message?.content?.trim() ?? '';
+    if (!rawContent) {
+      return jsonResponse(
+        { error: `Model returned empty response (finish_reason: ${choice.finish_reason ?? 'unknown'})` },
+        502,
+      );
+    }
+
+    // Strip markdown code fences if present
+    let jsonStr = rawContent;
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    }
+
+    let parsedContent: { draft?: string; sources?: { kind: string; label: string; ref: string }[] };
+    try {
+      parsedContent = JSON.parse(jsonStr);
+    } catch {
+      // Fallback: extract substring between first '{' and last '}'
+      const firstBrace = jsonStr.indexOf('{');
+      const lastBrace = jsonStr.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          parsedContent = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
+        } catch {
+          console.error('draft-cover-letter: Model returned non-JSON:', rawContent);
+          return jsonResponse({ error: 'Model returned non-JSON' }, 502);
+        }
+      } else {
+        console.error('draft-cover-letter: Model returned non-JSON:', rawContent);
+        return jsonResponse({ error: 'Model returned non-JSON' }, 502);
+      }
+    }
+
     const draft = (parsedContent.draft ?? '').slice(0, lengthConfig.maxChars);
     const sources = parsedContent.sources ?? [{ kind: 'memory_chunk', label: 'Your history', ref: 'memory' }];
 
