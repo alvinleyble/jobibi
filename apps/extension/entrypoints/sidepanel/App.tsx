@@ -1,12 +1,15 @@
+import { useState } from 'react';
 import { APP_NAME } from '@jobibi/shared';
 import { useSession } from './useSession';
 import SignIn from './SignIn';
 import { supabase } from './supabase';
 import JobStreetQuestions from './JobStreetQuestions';
 import MemoryBank from './MemoryBank';
+import { Settings } from './Settings';
 
 function App() {
   const { session, loading, isBetaTester } = useSession();
+  const [showSettings, setShowSettings] = useState(false);
 
   if (loading) {
     return (
@@ -22,19 +25,60 @@ function App() {
 
   return (
     <div className="flex h-screen flex-col items-center overflow-y-auto bg-white">
-      <div className="flex w-full max-w-md flex-col items-center gap-1 p-4 text-center">
-        <h1 className="text-xl font-semibold text-slate-900">{APP_NAME}</h1>
-        <p className="text-sm text-slate-500">Signed in as {session.user.email}.</p>
-        <button
-          type="button"
-          onClick={() => supabase.auth.signOut()}
-          className="mt-1 rounded border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700"
-        >
-          Sign out
-        </button>
-      </div>
-      <JobStreetQuestions isBetaTester={isBetaTester} />
-      <MemoryBank userId={session.user.id} />
+      {/* Top Header Navigation Bar */}
+      <header className="flex w-full max-w-md items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h1 className="text-base font-bold text-slate-900 tracking-tight">{APP_NAME}</h1>
+          {isBetaTester ? (
+            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+              BETA
+            </span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="max-w-[180px] truncate text-xs text-slate-500" title={`Signed in as ${session.user.email}`}>
+            Signed in as {session.user.email}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowSettings((prev) => !prev)}
+            aria-label="Settings"
+            title="Settings & Privacy"
+            data-testid="settings-btn"
+            className={`rounded p-1.5 text-xs font-medium transition-colors ${
+              showSettings
+                ? 'bg-slate-900 text-white'
+                : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            ⚙️
+          </button>
+          <button
+            type="button"
+            onClick={() => supabase.auth.signOut()}
+            aria-label="Sign out"
+            data-testid="sign-out-btn"
+            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      {/* Main View vs Settings View */}
+      {showSettings ? (
+        <Settings
+          userId={session.user.id}
+          userEmail={session.user.email ?? ''}
+          isBetaTester={isBetaTester}
+          onClose={() => setShowSettings(false)}
+        />
+      ) : (
+        <>
+          <JobStreetQuestions isBetaTester={isBetaTester} />
+          <MemoryBank userId={session.user.id} />
+        </>
+      )}
     </div>
   );
 }

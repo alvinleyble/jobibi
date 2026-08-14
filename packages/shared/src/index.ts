@@ -78,3 +78,14 @@ export type {
   InsertFieldResult,
 } from './autofill/autofill.ts';
 
+// Settings, Caps & Video Media Branching (S12) — lightweight, safe for extension bundle
+export {
+  OUTPUT_LENGTHS,
+  OUTPUT_LENGTH_CONFIG,
+  DAILY_SUGGESTION_LIMIT,
+  WEEKLY_COVER_LETTER_LIMIT,
+  VIDEO_QUESTION_KEYWORDS,
+  isVideoQuestion,
+} from './settings/settings.ts';
+export type { OutputLength, OutputLengthConfig } from './settings/settings.ts';
+

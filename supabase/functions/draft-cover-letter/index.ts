@@ -9,6 +9,7 @@ import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
+import { WEEKLY_COVER_LETTER_LIMIT } from '../../../packages/shared/src/settings/settings.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -51,6 +52,36 @@ Deno.serve(async (req) => {
     );
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
     if (userErr || !user) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+    // ── S12: Weekly Cover Letter Quota Check for non-beta users ──
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('is_beta_tester')
+      .eq('id', user.id)
+      .maybeSingle();
+    const isBetaTester = Boolean((profileRow as { is_beta_tester?: boolean } | null)?.is_beta_tester);
+
+    if (!isBetaTester) {
+      const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { count: coverLetterCount } = (await supabase
+        .from('documents')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('kind', 'cover_letter')
+        .gte('created_at', sevenDaysAgoIso)) as unknown as { count: number | null };
+      if ((coverLetterCount ?? 0) >= WEEKLY_COVER_LETTER_LIMIT) {
+        return jsonResponse(
+          {
+            error: 'weekly_cover_letter_quota_reached',
+            code: 'weekly_cover_letter_quota_reached',
+            limit: WEEKLY_COVER_LETTER_LIMIT,
+            used: coverLetterCount ?? WEEKLY_COVER_LETTER_LIMIT,
+            message: `Weekly cover letter limit reached (${WEEKLY_COVER_LETTER_LIMIT} free per 7 days). Upgrade to Premium for unlimited cover letters.`,
+          },
+          429,
+        );
+      }
+    }
 
     const body = await req.json().catch(() => null);
     const parsed = DraftCoverLetterRequestSchema.safeParse(body);
