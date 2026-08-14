@@ -1,4 +1,5 @@
-import { extractGenericQuestions } from '@jobibi/shared';
+import { extractGenericQuestions, executeAutofill } from '@jobibi/shared';
+import type { ExtractedQuestion, InsertFieldPayload } from '@jobibi/shared';
 
 export default defineContentScript({
   // Generic fallback: runs on all URLs but self-skips on dedicated hosts.
@@ -75,6 +76,27 @@ export default defineContentScript({
       debounceTimer = window.setTimeout(scanAndBroadcast, 300);
     }
 
+    function getFieldElement(q: ExtractedQuestion): Element | null {
+      try {
+        const bySelector = document.querySelector(q.field.selector);
+        if (bySelector) return bySelector;
+      } catch {}
+      if (q.field.id) {
+        const byId = document.getElementById(q.field.id);
+        if (byId) return byId;
+      }
+      if (q.field.name) {
+        try {
+          const esc = (globalThis as unknown as { CSS?: { escape: (v: string) => string } }).CSS?.escape
+            ? (globalThis as unknown as { CSS: { escape: (v: string) => string } }).CSS.escape(q.field.name)
+            : q.field.name.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+          const byName = document.querySelector(`${q.field.tagName}[name="${esc}"]`);
+          if (byName) return byName;
+        } catch {}
+      }
+      return null;
+    }
+
     const initTimer = window.setTimeout(scanAndBroadcast, 800);
     const observer = new MutationObserver(debouncedScan);
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: false });
@@ -89,6 +111,42 @@ export default defineContentScript({
         if (t === 'JOBIBI_REQUEST_QUESTIONS') {
           if (!lastResult) lastResult = extractGenericQuestions(document);
           sendResponse({ type: 'JOBIBI_QUESTIONS', payload: lastResult });
+          return true;
+        }
+        if (t === 'JOBIBI_INSERT_FIELD') {
+          const payload = (message as { payload?: InsertFieldPayload }).payload;
+          if (!payload) {
+            sendResponse({ ok: false, error: 'Missing insert payload' });
+            return true;
+          }
+
+          let el: Element | null = null;
+          let conf: number | undefined = payload.confidence;
+          if (payload.questionId) {
+            if (!lastResult) lastResult = extractGenericQuestions(document);
+            const q = lastResult.questions.find((qq) => qq.id === payload.questionId);
+            if (q) {
+              if (conf === undefined) conf = q.confidence;
+              el = getFieldElement(q);
+            }
+          }
+          if (!el && payload.selector) {
+            try {
+              el = document.querySelector(payload.selector);
+            } catch {}
+          }
+          if (!el && payload.fieldId) {
+            el = document.getElementById(payload.fieldId);
+          }
+
+          const res = executeAutofill({
+            el,
+            text: payload.text,
+            confidence: conf,
+            isSensitive: payload.isSensitive,
+          });
+
+          sendResponse(res);
           return true;
         }
       }

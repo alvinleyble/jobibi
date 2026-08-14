@@ -98,7 +98,7 @@ Free tier: Copy. Premium: Copy + Insert (fills the field; user still reviews and
 
 | Table | Holds | Key columns |
 |---|---|---|
-| `profiles` | The user | auth id, display name, locale, tier |
+| `profiles` | The user | auth id, display name, locale, tier, is_beta_tester (client self-update blocked by trigger) |
 | `documents` | Uploads, pasted cover letters, and accepted Draft Cover Letter output | file ref (nullable — null for pasted text), kind (resume/cover/transcript), extracted text, parsed_at, origin (nullable — set for accepted cover-letter drafts) |
 | `memory_chunks` | Searchable pieces of history | text, embedding, source ref, type (experience/skill/story/preference/gap_answer/qa_pair), freshness_at |
 | `applications` | Each application the user works | company, role, site, url hash, status, submitted_at |

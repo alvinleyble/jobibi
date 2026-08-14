@@ -6,7 +6,7 @@ import JobStreetQuestions from './JobStreetQuestions';
 import MemoryBank from './MemoryBank';
 
 function App() {
-  const { session, loading } = useSession();
+  const { session, loading, isBetaTester } = useSession();
 
   if (loading) {
     return (
@@ -33,7 +33,7 @@ function App() {
           Sign out
         </button>
       </div>
-      <JobStreetQuestions />
+      <JobStreetQuestions isBetaTester={isBetaTester} />
       <MemoryBank userId={session.user.id} />
     </div>
   );

@@ -1,5 +1,6 @@
-import { extractIndeedQuestions, verifySingleMapping, INDEED_QUESTIONS_MODULE_PATH_RE } from '@jobibi/shared';
-import type { ExtractionResult, ExtractedQuestion } from '@jobibi/shared';
+import { extractIndeedQuestions, verifySingleMapping, INDEED_QUESTIONS_MODULE_PATH_RE, executeAutofill } from '@jobibi/shared';
+import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload } from '@jobibi/shared';
+
 
 export default defineContentScript({
   matches: ['*://*.indeed.com/*', '*://*.indeed.co.uk/*', '*://*.indeed.co.jp/*', '*://*.indeed.com.au/*', '*://*.indeed.ca/*'],
@@ -273,6 +274,51 @@ export default defineContentScript({
             }
           }
           sendResponse({ ok: true });
+          return true;
+        }
+        if (t === 'JOBIBI_INSERT_FIELD') {
+          const payload = (message as { payload?: InsertFieldPayload }).payload;
+          if (!payload) {
+            sendResponse({ ok: false, error: 'Missing insert payload' });
+            return true;
+          }
+          const snapshotSuggestionMapping = (id: string) => {
+            if (!lastResult) lastResult = extractIndeedQuestions(document);
+            const q = lastResult.questions.find((qq) => qq.id === id);
+            if (q) suggestionMappingById.set(id, q);
+          };
+
+          let el: Element | null = null;
+          let conf: number | undefined = payload.confidence;
+          if (payload.questionId) {
+            if (!lastResult) lastResult = extractIndeedQuestions(document);
+            const q = lastResult.questions.find((qq) => qq.id === payload.questionId);
+            if (q) {
+              if (conf === undefined) conf = q.confidence;
+              el = getFieldElement(q);
+            }
+          }
+          if (!el && payload.selector) {
+            try {
+              el = document.querySelector(payload.selector);
+            } catch {}
+          }
+          if (!el && payload.fieldId) {
+            el = document.getElementById(payload.fieldId);
+          }
+
+          const res = executeAutofill({
+            el,
+            text: payload.text,
+            confidence: conf,
+            isSensitive: payload.isSensitive,
+          });
+
+          if (res.ok && payload.questionId) {
+            pendingDraftMap.set(payload.questionId, payload.text);
+            snapshotSuggestionMapping(payload.questionId);
+          }
+          sendResponse(res);
           return true;
         }
         if (t === 'JOBIBI_CAPTURE_NOW') {
