@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { AUTOFILL_CONFIDENCE_THRESHOLD } from '@jobibi/shared';
+import { AUTOFILL_CONFIDENCE_THRESHOLD, isVideoQuestion } from '@jobibi/shared';
 import type { ExtractedQuestion, ExtractionResult } from '@jobibi/shared';
 
 interface SuggestState {
@@ -27,6 +27,9 @@ interface SuggestState {
     priorCompany?: string | null;
     priorRole?: string | null;
   } | null;
+  isVideo?: boolean;
+  videoTalkingPoints?: string[];
+  videoScript?: string;
   error?: string;
   loading?: boolean;
 }
@@ -147,6 +150,9 @@ export function SuggestCard({
         sensitiveFact: data.sensitiveFact ?? null,
         sensitiveVia: data.sensitiveVia ?? null,
         seenBefore: data.seenBefore ?? null,
+        isVideo: data.isVideo,
+        videoTalkingPoints: data.videoTalkingPoints,
+        videoScript: data.videoScript,
       });
       // propagate draft to content script for capture origin diff (D13)
       if (data.outcome === 'draft' && data.answer && onDraftAvailable) {
@@ -609,7 +615,100 @@ export function SuggestCard({
           )}
         </div>
       ) : null}
-      {state.outcome === 'draft' ? (
+      {/* Dedicated Video Talking Points & Script Card (S12) */}
+      {state.outcome === 'draft' && (state.isVideo || isVideoQuestion(q.label)) ? (
+        <div
+          data-testid="video-script-card"
+          className="rounded border border-indigo-200 bg-indigo-50/60 p-2.5 text-left"
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-indigo-900">
+              🎥 Video Talking Points &amp; Script
+            </p>
+            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800 border border-indigo-200">
+              60s Speaking Script
+            </span>
+          </div>
+          <p className="mt-0.5 text-[10px] text-slate-500">
+            Structured talking points and speaking script grounded in your history.
+          </p>
+
+          {/* Talking points / bullet list */}
+          {((state.videoTalkingPoints?.length ?? 0) > 0 || (state.skeleton?.length ?? 0) > 0) ? (
+            <div className="mt-2 rounded border border-indigo-100 bg-white p-2">
+              <p className="text-xs font-semibold text-slate-800">Key Talking Points</p>
+              <ul className="mt-1 list-inside list-disc text-xs text-slate-700 space-y-0.5">
+                {(state.videoTalkingPoints || state.skeleton)!.map((point, idx) => (
+                  <li key={idx}>{point}</li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={() =>
+                  copy(
+                    (state.videoTalkingPoints || state.skeleton)!
+                      .map((p) => `• ${p}`)
+                      .join('\n'),
+                  )
+                }
+                data-testid="copy-talking-points-btn"
+                className="mt-1.5 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Copy talking points
+              </button>
+            </div>
+          ) : null}
+
+          {/* Speaking Script */}
+          <div className="mt-2 rounded border border-indigo-100 bg-white p-2">
+            <p className="text-xs font-semibold text-slate-800">60-Second Speaking Script</p>
+            <p className="mt-1 text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">
+              {state.videoScript || state.answer}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => copy(state.videoScript || state.answer || '')}
+                data-testid="copy-video-script-btn"
+                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Copy script
+              </button>
+              {isBetaTester ? (
+                <button
+                  type="button"
+                  onClick={() => onInsert(state.videoScript || state.answer || '')}
+                  disabled={q.confidence < AUTOFILL_CONFIDENCE_THRESHOLD || inserting || inserted}
+                  title={
+                    q.confidence < AUTOFILL_CONFIDENCE_THRESHOLD
+                      ? 'Auto-fill disabled: Low confidence mapping (< 0.75). Please copy and paste manually.'
+                      : undefined
+                  }
+                  className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
+                    inserted
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                      : q.confidence < AUTOFILL_CONFIDENCE_THRESHOLD
+                        ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 opacity-60'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50'
+                  }`}
+                >
+                  {inserting ? 'Inserting...' : inserted ? 'Inserted ✓' : 'Insert'}
+                </button>
+              ) : null}
+              {insertError ? <span className="text-[10px] text-red-600">{insertError}</span> : null}
+            </div>
+          </div>
+
+          {state.sources?.length ? (
+            <p className="mt-2 text-[10px] text-slate-500">
+              Sources: {state.sources.map((s) => s.label).join(', ')}
+            </p>
+          ) : null}
+          <p className="mt-1 text-[10px] text-slate-400">
+            q:{state.questionMatch?.toFixed(2)} r:{state.roleMatch?.toFixed(2)}
+          </p>
+        </div>
+      ) : state.outcome === 'draft' ? (
         <div className={`rounded border p-2 ${seen?.defaultIsPrior ? 'border-slate-200 bg-slate-50' : 'border-emerald-200 bg-emerald-50'}`}>
           <p className={`text-xs font-medium ${seen?.defaultIsPrior ? 'text-slate-700' : 'text-emerald-800'}`}>
             {seen?.defaultIsPrior ? 'Fresh draft — tailored for this role (prior was alternative above)' : 'Draft — grounded in your history'}

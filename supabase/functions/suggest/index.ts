@@ -11,13 +11,17 @@ import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/sr
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
 import { findSeenBefore } from '../../../packages/shared/src/capture/capture.ts';
 import type { QaPairRow } from '../../../packages/shared/src/capture/capture.ts';
+import {
+  OUTPUT_LENGTH_CONFIG,
+  DAILY_SUGGESTION_LIMIT,
+  isVideoQuestion,
+} from '../../../packages/shared/src/settings/settings.ts';
+import type { OutputLength } from '../../../packages/shared/src/settings/settings.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
 };
 
-const MAX_OUTPUT_TOKENS = 600; // D8: output cost control + field limits
-const MAX_ANSWER_CHARS = 900;
 const MAX_SKELETON_BULLETS = 5;
 const MAX_GAP_QUESTION_CHARS = 180;
 const MAX_GAP_TOKENS = 200;
@@ -73,6 +77,10 @@ const SuggestResponseSchema = z.object({
     })
     .nullable()
     .optional(),
+  // media branching for video questions (S12)
+  isVideo: z.boolean().optional(),
+  videoTalkingPoints: z.array(z.string()).optional(),
+  videoScript: z.string().optional(),
 });
 
 function jsonResponse(body: unknown, status: number) {
@@ -164,6 +172,39 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const parsed = SuggestRequestSchema.safeParse(body);
     if (!parsed.success) return jsonResponse({ error: parsed.error.flatten() }, 400);
+
+    // ── S12: Profile, Beta Status, and Daily Quota Enforcement ──
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('is_beta_tester, output_length')
+      .eq('id', user.id)
+      .maybeSingle();
+    const isBetaTester = Boolean((profileRow as { is_beta_tester?: boolean } | null)?.is_beta_tester);
+    const userOutputLength: OutputLength = ((profileRow as { output_length?: string } | null)?.output_length as OutputLength) || 'short';
+    const activeOutputLength: OutputLength = isBetaTester ? userOutputLength : 'short';
+    const lengthConfig = OUTPUT_LENGTH_CONFIG[activeOutputLength] || OUTPUT_LENGTH_CONFIG.short;
+
+    if (!isBetaTester) {
+      const todayUtc = new Date();
+      todayUtc.setUTCHours(0, 0, 0, 0);
+      const { count: dailyDecisionsCount } = (await supabase
+        .from('gate_decisions')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('created_at', todayUtc.toISOString())) as unknown as { count: number | null };
+      if ((dailyDecisionsCount ?? 0) >= DAILY_SUGGESTION_LIMIT) {
+        return jsonResponse(
+          {
+            error: 'daily_quota_reached',
+            code: 'daily_quota_reached',
+            limit: DAILY_SUGGESTION_LIMIT,
+            used: dailyDecisionsCount ?? DAILY_SUGGESTION_LIMIT,
+            message: `Daily suggestion limit reached (${DAILY_SUGGESTION_LIMIT} per day). Limit resets at midnight UTC.`,
+          },
+          429,
+        );
+      }
+    }
 
     const questionNorm = normalizeQuestion(parsed.data.question);
     const jobText = `${parsed.data.jobContext.role} ${parsed.data.jobContext.company}`;
@@ -447,6 +488,13 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get('OPENAI_API_KEY');
     if (!apiKey) return jsonResponse({ error: 'OPENAI_API_KEY not configured' }, 500);
 
+    const isVideo = isVideoQuestion(parsed.data.question);
+    const maxTokens = isVideo ? 600 : lengthConfig.maxTokens;
+    const maxAnswerChars = isVideo ? 1500 : lengthConfig.maxChars;
+    const wordInstruction = isVideo
+      ? 'a concise ~60-second speaking script (~150 words)'
+      : `${lengthConfig.wordRange} (≤${maxAnswerChars} chars)`;
+
     const snippets = scored.slice(0, 4).map((s) => s.row.text).join('\n---\n');
     // S9: fetch style profile (cached system prompt alongside snippets + question/job-context, ARCHITECTURE step 9)
     // When no row yet, omit entirely — draft normally with no special state.
@@ -457,11 +505,18 @@ Deno.serve(async (req) => {
       if (md) styleProfileMd = md.slice(0, 2000);
     } catch { /* omit on error */ }
     const styleBlock = styleProfileMd ? `Style profile — how the user writes (follow this voice):\n${styleProfileMd}\n\n` : '';
-    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below. Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
+
+    const system = isVideo
+      ? `${styleBlock}You are Jobibi, an editor of the user's best self. The employer is asking for a video introduction or video pitch. Draft structured bulleted talking points (≤5 bullets) and a concise ~60-second conversational speaking script grounded ONLY in the user's retrieved snippets below. Never invent facts. Keep script ≤${maxAnswerChars} chars.${styleProfileMd ? ' Match the style profile voice.' : ''}`
+      : `${styleBlock}You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below. Never invent. Keep answer ${wordInstruction}. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
+
+    const userPrompt = isVideo
+      ? `Question: ${parsed.data.question}\nJob: ${parsed.data.jobContext.role} at ${parsed.data.jobContext.company}\nSnippets:\n${snippets || '(no snippets)'}\n\nDraft structured bulleted talking points (as skeleton) and a 60-second speaking script (as answer) grounded only in snippets.`
+      : `Question: ${parsed.data.question}\nJob: ${parsed.data.jobContext.role} at ${parsed.data.jobContext.company}\nSnippets:\n${snippets || '(no snippets)'}\n\nDraft an answer grounded only in snippets. Keep answer ${wordInstruction}. If snippets lack material, set answer to empty is not allowed — this path is draft only.`;
 
     const payload = {
       model: 'gpt-5.6-luna',
-      max_completion_tokens: MAX_OUTPUT_TOKENS,
+      max_completion_tokens: maxTokens,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -470,7 +525,7 @@ Deno.serve(async (req) => {
           schema: {
             type: 'object',
             properties: {
-              answer: { type: 'string', description: `Copy-paste answer ≤${MAX_ANSWER_CHARS} chars, grounded in snippets` },
+              answer: { type: 'string', description: isVideo ? `60-second speaking script ≤${maxAnswerChars} chars` : `Copy-paste answer ≤${maxAnswerChars} chars, grounded in snippets` },
               skeleton: { type: 'array', items: { type: 'string' }, maxItems: MAX_SKELETON_BULLETS },
               sources: {
                 type: 'array',
@@ -493,7 +548,7 @@ Deno.serve(async (req) => {
       },
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: `Question: ${parsed.data.question}\nJob: ${parsed.data.jobContext.role} at ${parsed.data.jobContext.company}\nSnippets:\n${snippets || '(no snippets)'}\n\nDraft an answer grounded only in snippets. If snippets lack material, set answer to empty is not allowed — this path is draft only.` },
+        { role: 'user', content: userPrompt },
       ],
     };
 
@@ -514,11 +569,11 @@ Deno.serve(async (req) => {
     } catch {
       return jsonResponse({ error: 'Model returned non-JSON' }, 502);
     }
-    let answer = (parsedContent.answer ?? '').slice(0, MAX_ANSWER_CHARS);
+    let answer = (parsedContent.answer ?? '').slice(0, maxAnswerChars);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'memory_chunk', label: 'Your history', ref: 'memory' }];
 
-    if (answer.length > MAX_ANSWER_CHARS) answer = answer.slice(0, MAX_ANSWER_CHARS);
+    if (answer.length > maxAnswerChars) answer = answer.slice(0, maxAnswerChars);
 
     return jsonResponse(
       SuggestResponseSchema.parse({
@@ -530,6 +585,9 @@ Deno.serve(async (req) => {
         skeleton,
         sources,
         seenBefore: seenBefore ?? null,
+        isVideo: isVideo ? true : undefined,
+        videoTalkingPoints: isVideo ? skeleton : undefined,
+        videoScript: isVideo ? answer : undefined,
       }),
       200,
     );

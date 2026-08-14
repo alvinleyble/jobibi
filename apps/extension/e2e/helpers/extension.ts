@@ -36,6 +36,7 @@ export interface TestExtensionContext {
 
 export interface SeedSessionOptions {
   isBetaTester?: boolean;
+  outputLength?: 'short' | 'medium' | 'long';
   email?: string;
   userId?: string;
 }
@@ -143,14 +144,19 @@ export async function seedSession(
     },
   };
 
-  // Intercept profile query for is_beta_tester
+  // Intercept profile query for is_beta_tester and output_length
   await sidepanelPage.route('**/rest/v1/profiles*', async (route) => {
+    if (route.request().method() === 'PATCH' || route.request().method() === 'PUT') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         id: userId,
         is_beta_tester: isBeta,
+        output_length: options.outputLength || 'short',
         email,
       }),
     });
@@ -164,6 +170,21 @@ export async function seedSession(
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });
   await sidepanelPage.route('**/rest/v1/memory_chunks*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await sidepanelPage.route('**/rest/v1/qa_pairs*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await sidepanelPage.route('**/rest/v1/gate_decisions*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await sidepanelPage.route('**/rest/v1/gap_answers*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await sidepanelPage.route('**/rest/v1/style_profile*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await sidepanelPage.route('**/rest/v1/applications*', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });
 

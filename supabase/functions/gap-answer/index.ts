@@ -10,13 +10,13 @@ import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { keywordOverlap, cosine, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
+import { OUTPUT_LENGTH_CONFIG } from '../../../packages/shared/src/settings/settings.ts';
+import type { OutputLength } from '../../../packages/shared/src/settings/settings.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
 };
 
-const MAX_OUTPUT_TOKENS = 600;
-const MAX_ANSWER_CHARS = 900;
 const MAX_SKELETON_BULLETS = 5;
 const MAX_GAP_ANSWER_CHARS = 2000;
 
@@ -240,6 +240,21 @@ Deno.serve(async (req) => {
     }
     const snippets = [chunkText, ...otherSnippets].slice(0, 4).join('\n---\n');
 
+    // S12: fetch profile output length config
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('is_beta_tester, output_length')
+      .eq('id', user.id)
+      .maybeSingle();
+    const isBetaTester = Boolean((profileRow as { is_beta_tester?: boolean } | null)?.is_beta_tester);
+    const userOutputLength: OutputLength = ((profileRow as { output_length?: string } | null)?.output_length as OutputLength) || 'short';
+    const activeOutputLength: OutputLength = isBetaTester ? userOutputLength : 'short';
+    const lengthConfig = OUTPUT_LENGTH_CONFIG[activeOutputLength] || OUTPUT_LENGTH_CONFIG.short;
+
+    const maxTokens = lengthConfig.maxTokens;
+    const maxAnswerChars = lengthConfig.maxChars;
+    const wordInstruction = `${lengthConfig.wordRange} (≤${maxAnswerChars} chars)`;
+
     // S9: style profile into drafting (consistent with suggest/draft-cover-letter)
     let styleProfileMd: string | null = null;
     try {
@@ -248,10 +263,10 @@ Deno.serve(async (req) => {
       if (md) styleProfileMd = md.slice(0, 2000);
     } catch { /* omit */ }
     const styleBlock = styleProfileMd ? `Style profile — how the user writes (follow this voice):\n${styleProfileMd}\n\n` : '';
-    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below (first snippet is the user's fresh answer to your gap question, so use it). Never invent. Keep answer ≤${MAX_ANSWER_CHARS} chars. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
+    const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below (first snippet is the user's fresh answer to your gap question, so use it). Never invent. Keep answer ${wordInstruction}. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
     const payload = {
       model: 'gpt-5.6-luna',
-      max_completion_tokens: MAX_OUTPUT_TOKENS,
+      max_completion_tokens: maxTokens,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -260,7 +275,7 @@ Deno.serve(async (req) => {
           schema: {
             type: 'object',
             properties: {
-              answer: { type: 'string', description: `Copy-paste answer ≤${MAX_ANSWER_CHARS} chars, grounded in snippets` },
+              answer: { type: 'string', description: `Copy-paste answer ≤${maxAnswerChars} chars, grounded in snippets` },
               skeleton: { type: 'array', items: { type: 'string' }, maxItems: MAX_SKELETON_BULLETS },
               sources: {
                 type: 'array',
@@ -283,7 +298,7 @@ Deno.serve(async (req) => {
       },
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: `Original employer question: ${originalQuestion}\nGap question asked: ${gapQuestion}\nUser's gap answer: ${trimmedAnswer}\nJob: ${jobContext.role} at ${jobContext.company}\nSnippets:\n${snippets || '(no snippets)'}\n\nDraft the answer to the original employer question, grounded only in snippets. First snippet is the user's fresh gap answer — prioritize it.` },
+        { role: 'user', content: `Original employer question: ${originalQuestion}\nGap question asked: ${gapQuestion}\nUser's gap answer: ${trimmedAnswer}\nJob: ${jobContext.role} at ${jobContext.company}\nSnippets:\n${snippets || '(no snippets)'}\n\nDraft the answer to the original employer question, grounded only in snippets. Keep answer ${wordInstruction}. First snippet is the user's fresh gap answer — prioritize it.` },
       ],
     };
 
@@ -304,8 +319,8 @@ Deno.serve(async (req) => {
     } catch {
       return jsonResponse({ error: 'Model returned non-JSON' }, 502);
     }
-    let draftedAnswer = (parsedContent.answer ?? '').slice(0, MAX_ANSWER_CHARS);
-    if (draftedAnswer.length > MAX_ANSWER_CHARS) draftedAnswer = draftedAnswer.slice(0, MAX_ANSWER_CHARS);
+    let draftedAnswer = (parsedContent.answer ?? '').slice(0, maxAnswerChars);
+    if (draftedAnswer.length > maxAnswerChars) draftedAnswer = draftedAnswer.slice(0, maxAnswerChars);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'gap_answer', label: 'Your gap answer', ref: (gapRow as { id: string }).id }];
 
