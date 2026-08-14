@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Indeed Apply - Full Stack Developer</title>
+</head>
+<body>
+  <div class="ia-JobHeader">
+    <h1 class="ia-JobHeader-title">Full Stack Developer</h1>
+    <span class="ia-JobHeader-company">Acme Software</span>
+  </div>
+
+  <div id="indeed-apply-questions-module" class="ia-QuestionsModule">
+    <h2>Questions from the employer</h2>
+    <form id="indeed-apply-form" action="/submit-success" method="POST">
+      <!-- High confidence question with label-for (1.0) -->
+      <div class="ia-Questions-item">
+        <label for="q_indeed_1">How many years of work experience do you have with Playwright?</label>
+        <textarea id="q_indeed_1" name="experience_playwright" class="ia-Textarea"></textarea>
+      </div>
+
+      <!-- Medium confidence question with aria-label (0.80) -->
+      <div class="ia-Questions-item">
+        <label>Expected Compensation</label>
+        <input type="text" id="q_indeed_salary" name="expected_salary" aria-label="What is your desired monthly salary?" />
+      </div>
+
+      <!-- Radio question group -->
+      <div class="ia-Questions-item">
+        <fieldset>
+          <legend>Are you comfortable working in a hybrid arrangement?</legend>
+          <label><input type="radio" name="hybrid_work" value="yes" /> Yes</label>
+          <label><input type="radio" name="hybrid_work" value="no" /> No</label>
+        </fieldset>
+      </div>
+
+      <div class="ia-Form-actions">
+        <button type="submit" class="ia-continueButton">Continue</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

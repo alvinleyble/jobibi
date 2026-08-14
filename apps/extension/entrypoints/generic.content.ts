@@ -23,6 +23,9 @@ export default defineContentScript({
   allFrames: false,
 
   main(ctx) {
+    if (/jobstreet|seek|jobsdb|linkedin|indeed/i.test(location.host)) {
+      return;
+    }
     let lastResult: ReturnType<typeof extractGenericQuestions> | null = null;
     let debounceTimer: number | null = null;
 

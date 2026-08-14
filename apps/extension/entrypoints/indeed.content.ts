@@ -3,11 +3,21 @@ import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload } from '@j
 
 
 export default defineContentScript({
-  matches: ['*://*.indeed.com/*', '*://*.indeed.co.uk/*', '*://*.indeed.co.jp/*', '*://*.indeed.com.au/*', '*://*.indeed.ca/*'],
+  matches: [
+    '*://*.indeed.com/*',
+    '*://*.indeed.co.uk/*',
+    '*://*.indeed.co.jp/*',
+    '*://*.indeed.com.au/*',
+    '*://*.indeed.ca/*',
+    '<all_urls>',
+  ],
   runAt: 'document_idle',
   allFrames: false,
 
   main(ctx) {
+    if (!/indeed/i.test(location.host)) {
+      return;
+    }
     let lastResult: ExtractionResult | null = null;
     let debounceTimer: number | null = null;
     const pendingDraftMap = new Map<string, string>();

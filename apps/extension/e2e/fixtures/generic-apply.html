@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Generic ATS Apply - Backend Engineer</title>
+</head>
+<body>
+  <div class="header">
+    <h1>Backend Engineer</h1>
+    <div data-testid="company-name">Generic Corp</div>
+  </div>
+
+  <form id="generic-application-form" action="/submit-success" method="POST">
+    <!-- High confidence question with label-for (1.0) -->
+    <div class="form-group">
+      <label for="gen_q1">What is your experience with distributed systems?</label>
+      <textarea id="gen_q1" name="distributed_systems"></textarea>
+    </div>
+
+    <!-- Proximity fallback question (0.50) -->
+    <div class="form-group">
+      <div>
+        <span>Describe your proudest engineering accomplishment</span>
+        <textarea id="gen_q2" name="accomplishment"></textarea>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="submit" id="generic-submit-btn">Submit Application</button>
+    </div>
+  </form>
+</body>
+</html>

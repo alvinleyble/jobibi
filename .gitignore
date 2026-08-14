@@ -34,3 +34,9 @@ pnpm-debug.log*
 
 # Personal local test files
 .jobibi-personal-files/
+
+# Test outputs
+test-results/
+playwright-report/
+blob-report/
+
