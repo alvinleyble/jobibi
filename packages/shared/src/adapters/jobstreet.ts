@@ -416,8 +416,6 @@ export function extractJobStreetQuestions(root: ParentNode): ExtractionResult {
   // PH_Q_7791_V86_A151031, PH_Q_7288…). Stepper, job header
   // ("Applying for…"), profile card, and Choose-documents radios have ids
   // like _r_2p / _r_7d_ with no _Q_ — filtering by that is site-generic.
-  // Exception: the single "Write a cover letter" textarea in Choose
-  // documents (draftable per posting) is kept even without _Q_.
   const fields = rawFields.filter((el) => {
     if (!isVisible(el)) return false;
     const type = (el.getAttribute('type') || '').toLowerCase();
@@ -428,9 +426,9 @@ export function extractJobStreetQuestions(root: ParentNode): ExtractionResult {
     if (['q', 'search', 'keyword'].includes(name) && !(el.closest('form'))) return false;
 
     // Site-generic step scoping: when the page has real employer
-    // questions (PH_Q_ / _Q_ — e.g. PH_Q_7791, PH_Q_7288), keep only those
-    // plus the single cover-letter draftable. This automatically excludes
-    // stepper, job header (Applying for…), profile card, etc. without
+    // questions (PH_Q_ / _Q_ — e.g. PH_Q_7791, PH_Q_7288), keep only those.
+    // This automatically excludes stepper, job header (Applying for…),
+    // profile card, and the Choose-documents cover-letter textarea without
     // hardcoding any company name. Test fixtures have no _Q_ and no
     // apply stepper, so we fall back to keeping everything there.
     const id = el.getAttribute('id') || '';
@@ -438,20 +436,16 @@ export function extractJobStreetQuestions(root: ParentNode): ExtractionResult {
     const hasEmployerQOnPage = rawFields.some(
       (f) => /_Q_/.test(f.getAttribute('id') || '') || /_Q_/.test(f.getAttribute('name') || ''),
     );
-    const isCoverLetterDraftable =
-      el.tagName.toLowerCase() === 'textarea' &&
-      (el.getAttribute('aria-label') === 'Write a cover letter' ||
-        (el.getAttribute('placeholder') || '').includes('Introduce yourself'));
     if (hasEmployerQOnPage) {
       const isEmployerQ = /_Q_/.test(id) || /_Q_/.test(rawName) || /question-.*_Q_/.test(id);
-      if (!isEmployerQ && !isCoverLetterDraftable) return false;
+      if (!isEmployerQ) return false;
     } else {
       // No employer Q on page — could be Choose-documents step (has stepper)
       // or a test fixture. Only filter if we're on a real Apply flow
-      // (stepper text present) — then keep only the cover-letter draftable.
+      // (stepper text present) — then exclude all non-question fields.
       const bodyText = (root as Document).body?.textContent || (root as Document).textContent || '';
       const isApplyFlow = bodyText.includes('Answer employer questions') && bodyText.includes('Choose documents');
-      if (isApplyFlow && !isCoverLetterDraftable) return false;
+      if (isApplyFlow) return false;
     }
 
     if (type === 'radio' || type === 'checkbox') {
