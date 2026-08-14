@@ -181,7 +181,7 @@ Deno.serve(async (req) => {
 
     const payload = {
       model: 'gpt-5.6-luna',
-      max_completion_tokens: lengthConfig.maxTokens,
+      max_completion_tokens: Math.max(600, lengthConfig.maxTokens + 300),
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -234,6 +234,7 @@ Deno.serve(async (req) => {
     try {
       parsedContent = JSON.parse(content);
     } catch {
+      console.error('draft-cover-letter: Model returned non-JSON:', content);
       return jsonResponse({ error: 'Model returned non-JSON' }, 502);
     }
     const draft = (parsedContent.draft ?? '').slice(0, lengthConfig.maxChars);
