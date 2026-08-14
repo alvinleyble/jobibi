@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>JobStreet Apply - Senior Software Engineer</title>
+</head>
+<body>
+  <div class="job-header">
+    <h1 data-automation="jobTitle" class="job-title">Senior Software Engineer</h1>
+    <h2 data-automation="companyName" class="company-name">TechCorp Philippines</h2>
+  </div>
+
+  <div class="apply-container">
+    <div>Answer employer questions</div>
+    <form id="jobstreet-apply-form" action="/submit-success" method="POST">
+      <!-- High-confidence question with label-for (1.0) -->
+      <div class="question-container" data-automation="question-item">
+        <label for="PH_Q_101_V1">Why do you want to work at TechCorp?</label>
+        <textarea id="PH_Q_101_V1" name="PH_Q_101" data-automation="PH_Q_101"></textarea>
+      </div>
+
+      <!-- Medium-confidence question with aria-labelledby (0.85) -->
+      <div class="question-container" data-automation="question-item">
+        <span id="lbl_q102">Describe your experience with TypeScript and React</span>
+        <textarea id="PH_Q_102_V1" name="PH_Q_102" aria-labelledby="lbl_q102"></textarea>
+      </div>
+
+      <!-- Low-confidence question with proximity label (0.50) -->
+      <div class="question-container" data-automation="question-item">
+        <div>
+          <span>What are your salary expectations?</span>
+          <input type="text" id="PH_Q_103_V1" name="PH_Q_103" />
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" data-automation="submit-application">Submit application</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

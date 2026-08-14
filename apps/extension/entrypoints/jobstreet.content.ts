@@ -12,11 +12,15 @@ export default defineContentScript({
     '*://*.seek.co.nz/*apply*',
     '*://*.jobsdb.com/*apply*',
     '*://ph.jobstreet.com/apply/*',
+    '<all_urls>',
   ],
   runAt: 'document_idle',
   allFrames: false,
 
   main(ctx) {
+    if (!/jobstreet|seek|jobsdb/i.test(location.host) || !/apply/i.test(location.pathname + location.href)) {
+      return;
+    }
     let lastResult: ExtractionResult | null = null;
     let debounceTimer: number | null = null;
     const pendingDraftMap = new Map<string, string>();

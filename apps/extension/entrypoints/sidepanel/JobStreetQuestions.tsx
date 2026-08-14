@@ -47,11 +47,49 @@ function QuestionRow({
   );
 }
 
+function isValidWebTab(t: { url?: string }): boolean {
+  if (!t.url) return false;
+  return (
+    !t.url.startsWith('chrome-extension://') &&
+    !t.url.startsWith('chrome://') &&
+    !t.url.startsWith('about:') &&
+    !t.url.startsWith('edge://') &&
+    !t.url.startsWith('devtools://')
+  );
+}
+
+async function getTargetTab() {
+  try {
+    const currentTabs = await browser.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+    const validCurrent = currentTabs.find(isValidWebTab);
+    if (validCurrent) return validCurrent;
+
+    const allActiveTabs = await browser.tabs.query({ active: true }).catch(() => []);
+    const validActive = allActiveTabs.find(isValidWebTab);
+    if (validActive) return validActive;
+
+    const allTabs = await browser.tabs.query({}).catch(() => []);
+    const validTabs = allTabs.filter(isValidWebTab);
+    const supportedTab = validTabs.find((t) => /jobstreet|seek|jobsdb|linkedin|indeed/i.test(t.url ?? ''));
+    if (supportedTab) return supportedTab;
+
+    return validTabs[0] || currentTabs[0];
+  } catch {
+    return undefined;
+  }
+}
+
 export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTester?: boolean }) {
   const [result, setResult] = useState<ExtractionResult | null>(null);
+  const resultRef = useRef<ExtractionResult | null>(null);
   const [noListenerYet, setNoListenerYet] = useState(false);
   const [captureMsg, setCaptureMsg] = useState<string | null>(null);
   const draftMapRef = useRef<Map<string, string>>(new Map());
+
+  const updateResult = (res: ExtractionResult | null) => {
+    resultRef.current = res;
+    setResult(res);
+  };
 
   const handleDraftAvailable = useCallback((id: string, draft: string | null) => {
     if (draft) {
@@ -63,8 +101,8 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
     // find active tab and send
     (async () => {
       try {
-        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-        const tabId = tabs[0]?.id;
+        const tab = await getTargetTab();
+        const tabId = tab?.id;
         if (tabId != null) {
           await browser.tabs
             .sendMessage(tabId, {
@@ -85,7 +123,7 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
         const t = (message as { type?: string }).type;
         if (t === 'JOBIBI_QUESTIONS') {
           const payload = (message as { payload: ExtractionResult }).payload;
-          setResult(payload);
+          updateResult(payload);
           setNoListenerYet(false);
         } else if (t === 'JOBIBI_EXTRACTION_FAILURE') {
           const payload = (message as { payload: { adapter: string; host: string; url: string; detected_fields: number; extracted_questions: number; failure_reason: string } }).payload;
@@ -122,7 +160,7 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
           // enrich draftText from our map if content script didn't have it (race)
           const enrichedAnswers = payload.answers.map((a) => {
             // try to find id by label lookup in current result
-            const qMatch = result?.questions.find((q) => q.label === a.questionLabel);
+            const qMatch = resultRef.current?.questions.find((q) => q.label === a.questionLabel);
             if (qMatch && !a.draftText) {
               const fromMap = draftMapRef.current.get(qMatch.id);
               if (fromMap) return { ...a, draftText: fromMap };
@@ -209,8 +247,7 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
 
     const requestFromActiveTab = async () => {
       try {
-        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-        const tab = tabs[0];
+        const tab = await getTargetTab();
         const tabId = tab?.id;
         const url = tab?.url ?? '';
         const isSupportedHost = /jobstreet|seek|jobsdb|linkedin|indeed/i.test(url);
@@ -226,12 +263,12 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
               .sendMessage(tabId, { type: 'JOBIBI_REQUEST_QUESTIONS' })
               .catch(() => null)) as { payload?: ExtractionResult } | null;
             if (resp?.payload && resp.payload.questions.length > 0) {
-              setResult(resp.payload);
+              updateResult(resp.payload);
               setNoListenerYet(false);
               return;
             }
           }
-          setResult(null);
+          updateResult(null);
           setNoListenerYet(true);
           return;
         }
@@ -241,17 +278,17 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
               .sendMessage(tabId, { type: 'JOBIBI_REQUEST_QUESTIONS' })
               .catch(() => null)) as { payload?: ExtractionResult } | null;
             if (resp?.payload) {
-              setResult(resp.payload);
+              updateResult(resp.payload);
               setNoListenerYet(false);
               return;
             }
           }
-          setResult(null);
+          updateResult(null);
           setNoListenerYet(true);
           return;
         }
         if (tabId == null) {
-          setResult(null);
+          updateResult(null);
           setNoListenerYet(true);
           return;
         }
@@ -259,10 +296,10 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
           .sendMessage(tabId, { type: 'JOBIBI_REQUEST_QUESTIONS' })
           .catch(() => null)) as { payload?: ExtractionResult } | null;
         if (resp?.payload) {
-          setResult(resp.payload);
+          updateResult(resp.payload);
           setNoListenerYet(false);
         } else {
-          setResult(null);
+          updateResult(null);
           setNoListenerYet(false);
         }
       } catch {
@@ -277,14 +314,8 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
     const onActivated = () => {
       void requestFromActiveTab();
     };
-    const onUpdated = (
-      _tabId: number,
-      changeInfo: { status?: string },
-      tab: { active?: boolean },
-    ) => {
-      if (tab.active && changeInfo.status === 'complete') {
-        void requestFromActiveTab();
-      }
+    const onUpdated = () => {
+      void requestFromActiveTab();
     };
     browser.tabs.onActivated.addListener(onActivated);
     browser.tabs.onUpdated.addListener(onUpdated as Parameters<typeof browser.tabs.onUpdated.addListener>[0]);
@@ -292,9 +323,9 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
     return () => {
       browser.runtime.onMessage.removeListener(onMessage as Parameters<typeof browser.runtime.onMessage.removeListener>[0]);
       browser.tabs.onActivated.removeListener(onActivated);
-      browser.tabs.onUpdated.removeListener(onUpdated as Parameters<typeof browser.tabs.onUpdated.addListener>[0]);
+      browser.tabs.onUpdated.removeListener(onUpdated as Parameters<typeof browser.tabs.onUpdated.removeListener>[0]);
     };
-  }, [result]);
+  }, []);
 
   const questions = result?.questions ?? [];
   const isJobStreet = result

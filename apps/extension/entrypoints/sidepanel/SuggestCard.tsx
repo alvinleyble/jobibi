@@ -362,8 +362,14 @@ export function SuggestCard({
     setInserting(true);
     setInsertError(null);
     try {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      const tabId = tabs[0]?.id;
+      const currentTabs = await browser.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+      const validCurrent = currentTabs.find((t) => t.url && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('about:') && !t.url.startsWith('chrome://'));
+      const allActiveTabs = await browser.tabs.query({ active: true }).catch(() => []);
+      const validActive = allActiveTabs.find((t) => t.url && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('about:') && !t.url.startsWith('chrome://'));
+      const allTabs = await browser.tabs.query({}).catch(() => []);
+      const validTabs = allTabs.filter((t) => t.url && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('about:') && !t.url.startsWith('chrome://'));
+      const targetTab = validCurrent || validActive || validTabs.find((t) => /jobstreet|seek|jobsdb|linkedin|indeed/i.test(t.url ?? '')) || validTabs[0] || currentTabs[0];
+      const tabId = targetTab?.id;
       if (tabId == null) {
         setInsertError('Active tab not found');
         setInserting(false);

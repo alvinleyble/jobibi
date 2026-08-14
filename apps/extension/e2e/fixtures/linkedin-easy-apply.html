@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>LinkedIn Easy Apply - Staff Automation Engineer</title>
+</head>
+<body>
+  <div class="job-view-layout">
+    <h1 class="jobs-unified-top-card__job-title">Staff Automation Engineer</h1>
+    <a class="jobs-unified-top-card__company-name">InnoTech Solutions</a>
+    <div class="jobs-description-content__text">
+      We are looking for an experienced Staff Automation Engineer to lead E2E testing architecture, test lanes, and quality assurance.
+    </div>
+
+    <!-- LinkedIn Easy Apply Modal Container -->
+    <div class="jobs-easy-apply-modal artdeco-modal artdeco-modal--is-open" role="dialog" aria-labelledby="easy-apply-header">
+      <div class="jobs-easy-apply-content">
+        <h3 id="easy-apply-header" class="t-16 t-bold">Additional Questions</h3>
+        <form id="linkedin-apply-form" action="/submit-success" method="POST">
+          <!-- High confidence textarea with label-for (1.0) -->
+          <div class="fb-dash-form-element">
+            <label for="urn:li:fs_easyApplyFormElement:1">Tell us about a time you improved test suite reliability.</label>
+            <textarea id="urn:li:fs_easyApplyFormElement:1" name="test_reliability"></textarea>
+          </div>
+
+          <!-- Question with label-for (1.0) -->
+          <div class="fb-dash-form-element">
+            <label for="urn:li:fs_easyApplyFormElement:2">What is your expected annual salary?</label>
+            <input type="text" id="urn:li:fs_easyApplyFormElement:2" name="compensation" />
+          </div>
+
+          <div class="jobs-easy-apply-footer">
+            <button type="submit" class="artdeco-button artdeco-button--primary">Submit application</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

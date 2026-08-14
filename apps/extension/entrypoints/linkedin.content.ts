@@ -3,11 +3,14 @@ import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload } from '@j
 
 
 export default defineContentScript({
-  matches: ['*://*.linkedin.com/*'],
+  matches: ['*://*.linkedin.com/*', '<all_urls>'],
   runAt: 'document_idle',
   allFrames: false,
 
   main(ctx) {
+    if (!/linkedin/i.test(location.host)) {
+      return;
+    }
     let lastResult: ExtractionResult | null = null;
     let debounceTimer: number | null = null;
     const pendingDraftMap = new Map<string, string>();

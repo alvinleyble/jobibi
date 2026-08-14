@@ -18,3 +18,13 @@ For each question it does one of three things — drafts an answer, asks you one
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Decision log — accepted decisions and open questions |
 | [docs/build/v0.1.md](docs/build/v0.1.md) | Authorized build plan (see project-build-progress.md for current state) |
 | [docs/build/project-build-progress.md](docs/build/project-build-progress.md) | Single source of truth for current state |
+
+## Testing & Verification
+
+| Command | Purpose |
+|---|---|
+| `pnpm test` | Runs all Vitest unit tests in `packages/shared` and `apps/extension` |
+| `pnpm test:e2e` | Runs automated Playwright E2E suite against unpacked MV3 Chrome extension with local ATS fixtures |
+| `pnpm compile` | Runs TypeScript type checking across all workspace packages |
+| `pnpm build` | Builds the Chrome extension via WXT and verifies manifest declarations |
+
