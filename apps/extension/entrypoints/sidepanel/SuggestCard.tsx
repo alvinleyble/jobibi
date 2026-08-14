@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
+import { AUTOFILL_CONFIDENCE_THRESHOLD } from '@jobibi/shared';
 import type { ExtractedQuestion, ExtractionResult } from '@jobibi/shared';
 
 interface SuggestState {
@@ -73,10 +74,12 @@ export function SuggestCard({
   q,
   jobContext,
   onDraftAvailable,
+  isBetaTester = false,
 }: {
   q: ExtractedQuestion;
   jobContext: ExtractionResult['jobContext'];
   onDraftAvailable?: (questionId: string, draftText: string | null) => void;
+  isBetaTester?: boolean;
 }) {
   const [state, setState] = useState<SuggestState>({});
   const [gapInput, setGapInput] = useState('');
@@ -87,6 +90,10 @@ export function SuggestCard({
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualSuccess, setManualSuccess] = useState<string | null>(null);
+  // S11 beta auto-fill
+  const [inserting, setInserting] = useState(false);
+  const [inserted, setInserted] = useState(false);
+  const [insertError, setInsertError] = useState<string | null>(null);
 
   // Notify parent (JobStreetQuestions) when a draft is available for capture mapping (D13)
   useEffect(() => {
@@ -108,6 +115,8 @@ export function SuggestCard({
     setConfirmError(null);
     setConfirmDone(null);
     setShowUpdate(false);
+    setInsertError(null);
+    setInserted(false);
     try {
       const { data, error } = await supabase.functions.invoke('suggest', {
         body: {
@@ -348,6 +357,58 @@ export function SuggestCard({
     await navigator.clipboard.writeText(text);
   };
 
+  const onInsert = async (text: string) => {
+    if (!text || inserting) return;
+    setInserting(true);
+    setInsertError(null);
+    try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (tabId == null) {
+        setInsertError('Active tab not found');
+        setInserting(false);
+        return;
+      }
+      const response = (await browser.tabs
+        .sendMessage(tabId, {
+          type: 'JOBIBI_INSERT_FIELD',
+          payload: {
+            questionId: q.id,
+            text,
+            selector: q.field.selector,
+            fieldId: q.field.id,
+            confidence: q.confidence,
+          },
+        })
+        .catch((e) => ({
+          ok: false,
+          error: e instanceof Error ? e.message : 'Could not reach page content script',
+        }))) as { ok?: boolean; error?: string } | null;
+
+      if (response?.ok) {
+        setInserted(true);
+        if (onDraftAvailable) {
+          onDraftAvailable(q.id, text);
+        }
+        setTimeout(() => {
+          setInserted(false);
+        }, 2500);
+      } else {
+        setInsertError(response?.error || 'Failed to insert into form field');
+        setTimeout(() => {
+          setInsertError(null);
+        }, 4000);
+      }
+    } catch (e) {
+      setInsertError(e instanceof Error ? e.message : String(e));
+      setTimeout(() => {
+        setInsertError(null);
+      }, 4000);
+    } finally {
+      setInserting(false);
+    }
+  };
+
   const seen = state.seenBefore;
 
   return (
@@ -552,13 +613,37 @@ export function SuggestCard({
             <p className="mt-1 text-[10px] italic text-emerald-700">Used your follow-up answer to tailor this draft.</p>
           ) : null}
           <p className="mt-1 whitespace-pre-wrap text-xs text-slate-800">{state.answer}</p>
-          <button
-            type="button"
-            onClick={() => state.answer && copy(state.answer)}
-            className="mt-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs"
-          >
-            Copy answer
-          </button>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => state.answer && copy(state.answer)}
+              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+            >
+              Copy answer
+            </button>
+            {isBetaTester ? (
+              <button
+                type="button"
+                onClick={() => state.answer && onInsert(state.answer)}
+                disabled={q.confidence < AUTOFILL_CONFIDENCE_THRESHOLD || inserting || inserted}
+                title={
+                  q.confidence < AUTOFILL_CONFIDENCE_THRESHOLD
+                    ? 'Auto-fill disabled: Low confidence mapping (< 0.75). Please copy and paste manually.'
+                    : undefined
+                }
+                className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
+                  inserted
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                    : q.confidence < AUTOFILL_CONFIDENCE_THRESHOLD
+                      ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 opacity-60'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50'
+                }`}
+              >
+                {inserting ? 'Inserting...' : inserted ? 'Inserted ✓' : 'Insert'}
+              </button>
+            ) : null}
+            {insertError ? <span className="text-[10px] text-red-600">{insertError}</span> : null}
+          </div>
           {state.skeleton?.length ? (
             <div className="mt-2">
               <p className="text-xs font-medium text-slate-700">Skeleton</p>

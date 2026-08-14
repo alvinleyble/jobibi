@@ -20,10 +20,12 @@ function QuestionRow({
   q,
   jobContext,
   onDraftAvailable,
+  isBetaTester,
 }: {
   q: ExtractedQuestion;
   jobContext: ExtractionResult['jobContext'];
   onDraftAvailable: (id: string, draft: string | null) => void;
+  isBetaTester?: boolean;
 }) {
   return (
     <li className="flex flex-col gap-1 rounded border border-slate-200 p-2">
@@ -40,12 +42,12 @@ function QuestionRow({
       {q.context && q.context !== q.label ? (
         <span className="text-[10px] italic text-slate-400">Context: {q.context}</span>
       ) : null}
-      <SuggestCard q={q} jobContext={jobContext} onDraftAvailable={onDraftAvailable} />
+      <SuggestCard q={q} jobContext={jobContext} onDraftAvailable={onDraftAvailable} isBetaTester={isBetaTester} />
     </li>
   );
 }
 
-export default function JobStreetQuestions() {
+export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTester?: boolean }) {
   const [result, setResult] = useState<ExtractionResult | null>(null);
   const [noListenerYet, setNoListenerYet] = useState(false);
   const [captureMsg, setCaptureMsg] = useState<string | null>(null);
@@ -333,7 +335,7 @@ export default function JobStreetQuestions() {
           </p>
           <ul className="flex flex-col gap-1.5">
             {questions.map((q) => (
-              <QuestionRow key={q.id} q={q} jobContext={result?.jobContext ?? {}} onDraftAvailable={handleDraftAvailable} />
+              <QuestionRow key={q.id} q={q} jobContext={result?.jobContext ?? {}} onDraftAvailable={handleDraftAvailable} isBetaTester={isBetaTester} />
             ))}
           </ul>
         </>

@@ -62,3 +62,19 @@ export {
   sanitizeProfileMd,
 } from './styleProfile/styleProfile.ts';
 export type { VoiceCorpusItem } from './styleProfile/styleProfile.ts';
+
+// Auto-fill (S11) — lightweight, safe for extension bundle
+export {
+  AUTOFILL_CONFIDENCE_THRESHOLD,
+  SUPPORTED_AUTOFILL_INPUT_TYPES,
+  isSupportedInputType,
+  validateFillableElement,
+  fillElementValue,
+  executeAutofill,
+} from './autofill/autofill.ts';
+export type {
+  SupportedAutofillInputType,
+  InsertFieldPayload,
+  InsertFieldResult,
+} from './autofill/autofill.ts';
+
