@@ -203,4 +203,123 @@ describe('extractJobStreetQuestions', () => {
     expect(res.questions).toHaveLength(1);
     expect(res.questions[0].labelSource).toBe('placeholder');
   });
+
+  // S8A: cover-letter carve-out removed — textarea must no longer be
+  // detected as an application question on the Choose-documents step.
+  it('does not detect cover letter textarea on Choose-documents step (aria-label) when no employer Q present', () => {
+    const doc = dom(`
+      <html><body>
+        <div>Answer employer questions</div>
+        <div>Choose documents</div>
+        <form>
+          <div>
+            <span>Write a cover letter</span>
+            <textarea aria-label="Write a cover letter" placeholder="Introduce yourself to the employer"></textarea>
+          </div>
+        </form>
+      </body></html>
+    `);
+    const res = extractJobStreetQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('does not detect cover letter textarea on Choose-documents step (placeholder) when no employer Q present', () => {
+    const doc = dom(`
+      <html><body>
+        <div>Answer employer questions</div>
+        <div>Choose documents</div>
+        <form>
+          <div>
+            <span>Cover letter</span>
+            <textarea placeholder="Introduce yourself to the employer and explain why you are a good fit"></textarea>
+          </div>
+        </form>
+      </body></html>
+    `);
+    const res = extractJobStreetQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('does not detect cover letter textarea even when employer _Q_ questions are present on the page', () => {
+    const doc = dom(`
+      <html><body>
+        <div>Answer employer questions</div>
+        <div>Choose documents</div>
+        <form>
+          <div>
+            <label for="PH_Q_7791_V86_A151031">Why do you want this role?</label>
+            <textarea id="PH_Q_7791_V86_A151031" name="PH_Q_7791"></textarea>
+          </div>
+          <div>
+            <span>Write a cover letter</span>
+            <textarea aria-label="Write a cover letter" placeholder="Introduce yourself"></textarea>
+          </div>
+        </form>
+      </body></html>
+    `);
+    const res = extractJobStreetQuestions(doc);
+    // Only the real _Q_ employer question should survive.
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].field.id).toBe('PH_Q_7791_V86_A151031');
+  });
+
+  it('still detects real _Q_ employer questions when cover letter is also on the page', () => {
+    const doc = dom(`
+      <html><body>
+        <div>Answer employer questions</div>
+        <div>Choose documents</div>
+        <form>
+          <div>
+            <label for="PH_Q_7288_X1">What is your expected salary?</label>
+            <input id="PH_Q_7288_X1" name="PH_Q_7288" type="text" />
+          </div>
+          <div>
+            <label for="PH_Q_7791_V86_A151031">Why do you want this role?</label>
+            <textarea id="PH_Q_7791_V86_A151031"></textarea>
+          </div>
+          <div>
+            <span>Write a cover letter</span>
+            <textarea aria-label="Write a cover letter"></textarea>
+          </div>
+        </form>
+      </body></html>
+    `);
+    const res = extractJobStreetQuestions(doc);
+    expect(res.questions).toHaveLength(2);
+    const ids = res.questions.map((q) => q.field.id).sort();
+    expect(ids).toEqual(['PH_Q_7288_X1', 'PH_Q_7791_V86_A151031'].sort());
+  });
+
+  it('generic proximity fallback is untouched on plain pages without Apply stepper', () => {
+    const doc = dom(`
+      <form>
+        <div>
+          <span>Why should we hire you?</span>
+          <textarea name="hire"></textarea>
+        </div>
+      </form>
+    `);
+    const res = extractJobStreetQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toBe('Why should we hire you?');
+    expect(res.questions[0].labelSource).toBe('proximity');
+  });
+
+  it('cover letter textarea on a plain page without stepper is still picked up by generic fallback (not specially excluded)', () => {
+    const doc = dom(`
+      <form>
+        <div>
+          <span>Write a cover letter</span>
+          <textarea aria-label="Write a cover letter" placeholder="Introduce yourself"></textarea>
+        </div>
+      </form>
+    `);
+    const res = extractJobStreetQuestions(doc);
+    // No stepper text and no _Q_, so the generic extractor applies normally.
+    // The textarea has aria-label "Write a cover letter" which resolves via
+    // resolveLabel, so it is detected — this is the generic fallback, not
+    // the removed carve-out.
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].fieldType).toBe('textarea');
+  });
 });
