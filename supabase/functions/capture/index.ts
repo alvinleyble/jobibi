@@ -314,9 +314,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // S9: voice-corpus trigger — non-blocking fire-and-forget; style-profile owns claim/in-flight
+    // S9: voice-corpus trigger — style-profile owns claim/in-flight
     if (inserted.length > 0) {
-      void maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
+      await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
     }
 
     return jsonResponse({

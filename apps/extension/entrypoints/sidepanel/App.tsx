@@ -35,9 +35,11 @@ function App() {
 
   // Capture toast state across tabs
   const [captureMsg, setCaptureMsg] = useState<string | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
 
   useEffect(() => {
     let toastTimer: number | null = null;
+    let errorTimer: number | null = null;
 
     const showToast = (inserted: number, dropped = 0) => {
       if (inserted || dropped) {
@@ -49,21 +51,36 @@ function App() {
       }
     };
 
+    const showError = (message: string) => {
+      setCaptureError(`Could not save application answers: ${message}`);
+      if (errorTimer) clearTimeout(errorTimer);
+      errorTimer = window.setTimeout(() => setCaptureError(null), 6000);
+    };
+
     const onMsg = (message: unknown) => {
       if (typeof message === 'object' && message !== null) {
-        const m = message as { type?: string; payload?: { inserted?: number; droppedMismatched?: number } };
+        const m = message as { type?: string; payload?: { inserted?: number; droppedMismatched?: number; message?: string } };
         if (m.type === 'JOBIBI_CAPTURE_COMPLETED' && m.payload) {
           showToast(m.payload.inserted ?? 0, m.payload.droppedMismatched ?? 0);
+        } else if (m.type === 'JOBIBI_CAPTURE_FAILED' && m.payload?.message) {
+          showError(m.payload.message);
         }
       }
     };
     browser.runtime.onMessage.addListener(onMsg as Parameters<typeof browser.runtime.onMessage.addListener>[0]);
 
     const onStorageChanged = (changes: Record<string, unknown>, area: string) => {
-      if (area === 'local' && 'jobibi_last_capture' in changes) {
+      if (area !== 'local') return;
+      if ('jobibi_last_capture' in changes) {
         const val = (changes.jobibi_last_capture as { newValue?: { inserted?: number; droppedMismatched?: number } })?.newValue;
         if (val && typeof val.inserted === 'number') {
           showToast(val.inserted, val.droppedMismatched ?? 0);
+        }
+      }
+      if ('jobibi_last_capture_error' in changes) {
+        const val = (changes.jobibi_last_capture_error as { newValue?: { message?: string } })?.newValue;
+        if (val?.message) {
+          showError(val.message);
         }
       }
     };
@@ -71,6 +88,7 @@ function App() {
 
     return () => {
       if (toastTimer) clearTimeout(toastTimer);
+      if (errorTimer) clearTimeout(errorTimer);
       browser.runtime.onMessage.removeListener(onMsg as Parameters<typeof browser.runtime.onMessage.removeListener>[0]);
       browser.storage.onChanged.removeListener(onStorageChanged);
     };
@@ -388,6 +406,14 @@ function App() {
             className="mb-3 rounded-lg border border-success-tint-border bg-success-tint px-3 py-2 text-xs font-medium text-success"
           >
             {captureMsg}
+          </div>
+        ) : null}
+        {captureError ? (
+          <div
+            data-testid="capture-error-toast"
+            className="mb-3 rounded-lg border border-danger-tint-border bg-danger-tint px-3 py-2 text-xs font-medium text-danger"
+          >
+            {captureError}
           </div>
         ) : null}
 

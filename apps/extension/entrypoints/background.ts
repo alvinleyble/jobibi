@@ -1,4 +1,5 @@
 import { supabase } from './sidepanel/supabase';
+import { describeIngestError } from './sidepanel/ingestError';
 
 export interface CapturePayload {
   answers: Array<{
@@ -80,6 +81,19 @@ export async function handleCapture(payload: CapturePayload): Promise<{ ok: bool
 
     if (error) {
       console.warn('[background] capture Edge Function error:', error);
+      const message = await describeIngestError(error);
+
+      await browser.storage.local.set({
+        jobibi_last_capture_error: { at: Date.now(), message },
+      });
+
+      await browser.runtime
+        .sendMessage({
+          type: 'JOBIBI_CAPTURE_FAILED',
+          payload: { message },
+        })
+        .catch(() => {});
+
       return { ok: false, error };
     }
 
@@ -107,6 +121,19 @@ export async function handleCapture(payload: CapturePayload): Promise<{ ok: bool
     return { ok: false };
   } catch (err) {
     console.error('[background] handleCapture failed:', err);
+    const message = await describeIngestError(err);
+
+    await browser.storage.local.set({
+      jobibi_last_capture_error: { at: Date.now(), message },
+    });
+
+    await browser.runtime
+      .sendMessage({
+        type: 'JOBIBI_CAPTURE_FAILED',
+        payload: { message },
+      })
+      .catch(() => {});
+
     return { ok: false, error: err };
   }
 }

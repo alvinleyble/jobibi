@@ -117,7 +117,7 @@ describe('Background Service Worker Capture Handler', () => {
       });
     });
 
-    it('handles capture Edge Function errors without writing to storage', async () => {
+    it('surfaces capture Edge Function errors via storage and a failure broadcast', async () => {
       vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
         data: { session: null },
         error: null,
@@ -138,8 +138,14 @@ describe('Background Service Worker Capture Handler', () => {
       const res = await handleCapture(samplePayload);
 
       expect(res.ok).toBe(false);
-      expect(setSpy).not.toHaveBeenCalled();
-      expect(sendSpy).not.toHaveBeenCalled();
+      expect(setSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobibi_last_capture_error: expect.objectContaining({ message: expect.any(String) }),
+        }),
+      );
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'JOBIBI_CAPTURE_FAILED' }),
+      );
     });
   });
 });
