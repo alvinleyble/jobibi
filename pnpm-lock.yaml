@@ -60,6 +60,15 @@ importers:
 
   packages/shared:
     dependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.5
+        version: 0.5.5
+      '@electric-sql/pglite-pgvector':
+        specifier: ^0.0.6
+        version: 0.0.6(@electric-sql/pglite@0.5.5)
+      '@supabase/supabase-js':
+        specifier: ^2.45.0
+        version: 2.112.2
       fflate:
         specifier: ^0.8.2
         version: 0.8.3
@@ -188,6 +197,14 @@ packages:
     resolution: {integrity: sha512-AYxk5G/b2BPEfubcuxVEZEOpsLf0isqrPNJnnwAlUjZAiLdFg/uvLNRDuBhsC/Ar62X+rUhVlvlL+tKp9HCjfQ==}
     engines: {node: '>= 0.10.4'}
     hasBin: true
+
+  '@electric-sql/pglite-pgvector@0.0.6':
+    resolution: {integrity: sha512-KiPeiS/BMmjO71igzgexJAu5aPb3Y2yUjNTSMdti4ZL3zlqZFl4eLgbzLBGyG5Cxr9xFwYFmHh61ZTq6w6hUJA==}
+    peerDependencies:
+      '@electric-sql/pglite': 0.5.5
+
+  '@electric-sql/pglite@0.5.5':
+    resolution: {integrity: sha512-QeZ+oB7QaU4EJj2awrB8hwFZ5TXxLRBQ9Gfq0dQauYDdWsRtuWRCERgtri35vRfL07KQHlVlc/4Qxvn7a5AXeA==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -3125,6 +3142,12 @@ snapshots:
       split: 1.0.1
     transitivePeerDependencies:
       - supports-color
+
+  '@electric-sql/pglite-pgvector@0.0.6(@electric-sql/pglite@0.5.5)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.5
+
+  '@electric-sql/pglite@0.5.5': {}
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true

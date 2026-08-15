@@ -96,3 +96,47 @@ export {
 } from './ingestion/paste.ts';
 export type { PasteValidationResult, PastedDocumentProvenance } from './ingestion/paste.ts';
 
+// Storage abstraction (S14A) — one interface over Cloud SaaS (Supabase) and
+// Local BYO-Key (PGlite).
+//
+// PGliteStorageAdapter is deliberately NOT re-exported here, for the same
+// reason ./ingestion/* is not: this barrel is what apps/extension imports, and
+// naming the adapter from it makes Vite emit PGlite's WASM payload into the
+// extension output — 1.08 MB → 17.9 MB — even though the dynamic import inside
+// init() means no entrypoint actually loads it yet. It IS exported from
+// './storage/index.ts'; the local posture imports it by that deep path, the
+// same way the ingest Edge Function reaches ./ingestion/*.
+export type { StorageAdapter, StoragePosture } from './storage/storageAdapter.ts';
+export { MEMORY_CHUNK_TYPES, EXTRACTION_FAILURE_ADAPTERS } from './storage/types.ts';
+export type {
+  DocumentRecord,
+  ExtractionFailureAdapter,
+  InsertCaptureMismatchInput,
+  InsertDocumentInput,
+  InsertExtractionFailureInput,
+  InsertGateDecisionInput,
+  InsertMemoryChunkInput,
+  InsertQAPairInput,
+  MemoryChunkRecord,
+  MemoryChunkType,
+  QAPairRecord,
+  ScoredChunk,
+  SearchHybridParams,
+  StyleProfileRecord,
+  UpsertStyleProfileInput,
+} from './storage/types.ts';
+export { parseEmbedding, toVectorLiteral } from './storage/embedding.ts';
+export {
+  DEFAULT_SEARCH_LIMIT,
+  HYBRID_KEYWORD_WEIGHT,
+  HYBRID_VECTOR_WEIGHT,
+  queryTokens,
+  rankChunks,
+  scoreChunk,
+} from './storage/hybrid.ts';
+export { LOCAL_SCHEMA_SQL, LOCAL_SCHEMA_VERSION } from './storage/localSchema.ts';
+export {
+  SupabaseStorageAdapter,
+  SUPABASE_CANDIDATE_POOL,
+} from './storage/supabaseStorageAdapter.ts';
+
