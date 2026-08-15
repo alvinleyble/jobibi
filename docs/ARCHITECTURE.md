@@ -127,7 +127,7 @@ So the content script keeps watching the fields it already mapped and reads thei
 
 ## Memory growth and the style profile
 
-- On submit, captured answers land in `qa_pairs` with their `origin`, and new facts/stories are chunked into `memory_chunks`.
+- On submit, captured answers land in `qa_pairs` with their `origin`, and new facts/stories are chunked into `memory_chunks` — unless the question is a near-duplicate (hybrid similarity ≥0.90) of an existing `qa_pairs`/`memory_chunks` entry, in which case the `qa_pairs` audit row still writes but the `memory_chunks` insert is skipped, so retrieval and the Memory tab don't accumulate redundant copies of the same answered question.
 - A background job re-distills the **style profile** once the qualifying voice-corpus delta since the last rebuild reaches 10 (D19). This is the concrete mechanism behind "attuned after 15–20 applications". Distillation runs as a direct chat completion today; the half-price batch tier is deferred until a poller can reconcile its async result (D19).
 - **The voice corpus is filtered by origin.** It is the union of `qa_pairs` and `documents` rows with `origin in (user_written, user_edited)` plus all `gap_answers` rows (D19). `accepted_verbatim` drafts remain fully searchable as *content* but are excluded from *voice* learning. Without this filter, by application 15 most of `qa_pairs` would be Jobibi's own prose, and the style profile would be distilling model tone rather than the user's — drifting further from them with every cycle while claiming to do the opposite.
 - Every fact type has a freshness half-life (tools/skills ~180 days). Stale facts power **Grill Me** sessions.
