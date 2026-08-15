@@ -88,6 +88,13 @@
   3. **JSON Token Headroom & Robust Parsing**: Set `max_completion_tokens: Math.max(800, maxTokens + 400)` across `suggest` and `gap-answer` (matching `draft-cover-letter`) to guarantee Luna completes structured JSON generation without token exhaustion, and added markdown code-fence stripping and brace-fallback parsing before `JSON.parse()`.
   4. **Verification & Testing**: Added comprehensive unit tests in `packages/shared/src/settings/settings.test.ts`. All 193 unit tests passing (`pnpm test`), full TypeScript compilation passing with 0 errors (`pnpm compile`), and all 19 Playwright E2E tests passing in 24s (`pnpm test:e2e`).
 
+- 2026-08-15 — **Daily cover letter quota & preview attempt limit completed** on branch `fm/jobibi-cover-letter-attempt-limit` (PR #34). Switched free user cover letter quota from weekly to daily (1/day UTC) and closed the infinite preview loophole with a 5/day UTC attempt cap backed by `cover_letter_attempts` table:
+  1. **Database Migration (`supabase/migrations/20260815100000_cover_letter_attempts.sql`)**: Added `cover_letter_attempts` table (`id`, `user_id`, `created_at`) with RLS policies and index on `(user_id, created_at desc)`.
+  2. **Shared Settings & Caps (`packages/shared/src/settings/settings.ts`)**: Replaced `WEEKLY_COVER_LETTER_LIMIT` with `DAILY_COVER_LETTER_LIMIT = 1` and added `DAILY_COVER_LETTER_ATTEMPT_LIMIT = 5`, exported from `@jobibi/shared`.
+  3. **Edge Function Quota & Attempt Tracking (`supabase/functions/draft-cover-letter/index.ts`)**: For non-beta users, enforces 1/day accepted quota check (`documents.kind='cover_letter'` created today UTC, returning 429 `daily_cover_letter_quota_reached`) and 5/day preview attempt limit (`cover_letter_attempts` created today UTC, returning 429 `daily_cover_letter_preview_limit_reached` with friendly explanation); logs generation attempts into `cover_letter_attempts`.
+  4. **Sidepanel Usage & Quotas View (`UsageQuotasView.tsx` & `ingestError.ts`)**: Updated cover letter card to "Daily cover letters" showing `X of 1 used today (Y remaining) · resets midnight UTC`; updated `describeIngestError` to prioritize user-friendly error messages from Edge function responses.
+  5. **Verification & Testing**: Updated unit tests in `settings.test.ts` and `ingestError.test.ts` (194 tests passing), verified TypeScript compilation (`pnpm compile`), and added Playwright E2E spec in `e2e/settings-privacy.spec.ts` (all 20 tests passing).
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -99,6 +106,7 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete + PR #33 output length calibration. All 193 unit tests and 19 Playwright E2E tests passing with 0 errors.
+S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit. All 194 unit tests and 20 Playwright E2E tests passing with 0 errors.
+
 
 

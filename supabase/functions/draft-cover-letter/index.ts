@@ -11,7 +11,8 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
 import {
   OUTPUT_LENGTH_CONFIG,
-  WEEKLY_COVER_LETTER_LIMIT,
+  DAILY_COVER_LETTER_LIMIT,
+  DAILY_COVER_LETTER_ATTEMPT_LIMIT,
   trimGracefully,
   type OutputLength,
 } from '../../../packages/shared/src/settings/settings.ts';
@@ -67,21 +68,43 @@ Deno.serve(async (req) => {
     const lengthConfig = OUTPUT_LENGTH_CONFIG[activeOutputLength] || OUTPUT_LENGTH_CONFIG.short;
 
     if (!isBetaTester) {
-      const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const todayUtc = new Date();
+      todayUtc.setUTCHours(0, 0, 0, 0);
+
+      // 1. Accepted Quota Check (1/day UTC)
       const { count: coverLetterCount } = (await supabase
         .from('documents')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id)
         .eq('kind', 'cover_letter')
-        .gte('created_at', sevenDaysAgoIso)) as unknown as { count: number | null };
-      if ((coverLetterCount ?? 0) >= WEEKLY_COVER_LETTER_LIMIT) {
+        .gte('created_at', todayUtc.toISOString())) as unknown as { count: number | null };
+      if ((coverLetterCount ?? 0) >= DAILY_COVER_LETTER_LIMIT) {
         return jsonResponse(
           {
-            error: 'weekly_cover_letter_quota_reached',
-            code: 'weekly_cover_letter_quota_reached',
-            limit: WEEKLY_COVER_LETTER_LIMIT,
-            used: coverLetterCount ?? WEEKLY_COVER_LETTER_LIMIT,
-            message: `Weekly cover letter limit reached (${WEEKLY_COVER_LETTER_LIMIT} free per 7 days). Upgrade to Premium for unlimited cover letters.`,
+            error: 'daily_cover_letter_quota_reached',
+            code: 'daily_cover_letter_quota_reached',
+            limit: DAILY_COVER_LETTER_LIMIT,
+            used: coverLetterCount ?? DAILY_COVER_LETTER_LIMIT,
+            message: 'Daily cover letter limit reached (1 free per day). Limit resets at midnight UTC. Upgrade to Pro for unlimited cover letters.',
+          },
+          429,
+        );
+      }
+
+      // 2. Preview Attempt Cap (5/day UTC)
+      const { count: attemptCount } = (await supabase
+        .from('cover_letter_attempts')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('created_at', todayUtc.toISOString())) as unknown as { count: number | null };
+      if ((attemptCount ?? 0) >= DAILY_COVER_LETTER_ATTEMPT_LIMIT) {
+        return jsonResponse(
+          {
+            error: 'daily_cover_letter_preview_limit_reached',
+            code: 'daily_cover_letter_preview_limit_reached',
+            limit: DAILY_COVER_LETTER_ATTEMPT_LIMIT,
+            used: attemptCount ?? DAILY_COVER_LETTER_ATTEMPT_LIMIT,
+            message: "You've reached today's preview limit (5 drafts per day). Please try again tomorrow, or upgrade to Pro for unlimited cover letter drafting.",
           },
           429,
         );
@@ -98,6 +121,12 @@ Deno.serve(async (req) => {
     if (jobDescription.length < MIN_JOB_DESCRIPTION_CHARS) {
       return jsonResponse({ error: `Please provide a longer job description (at least ${MIN_JOB_DESCRIPTION_CHARS} characters) so Jobibi can draft a tailored cover letter.` }, 422);
     }
+
+    // 3. Log Attempt
+    await supabase.from('cover_letter_attempts').insert({
+      user_id: user.id,
+      created_at: new Date().toISOString(),
+    });
 
     // ── Retrieve: same hybrid pipeline as suggest, query is the JD text ──
     // No gate after this — always attempt to draft (S8 item 4).

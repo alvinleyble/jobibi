@@ -136,8 +136,8 @@ test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
     await expect(sidepanel.locator('text=⚡ 5 of 15 used today (10 remaining)')).toBeVisible();
 
     // Check Cover Letter quota indicator
-    await expect(sidepanel.locator('[data-testid="weekly-cover-quota-status"]')).toBeVisible();
-    await expect(sidepanel.locator('text=📄 0 of 1 used this week (1 remaining)')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="daily-cover-quota-status"]')).toBeVisible();
+    await expect(sidepanel.locator('text=📄 0 of 1 used today (1 remaining)')).toBeVisible();
   });
 
   test('Privacy Surface: Delete Everything opens confirmation modal requiring "DELETE"', async () => {
@@ -273,4 +273,47 @@ test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
     await expect(sidepanel.locator('[data-testid="copy-talking-points-btn"]')).toBeVisible();
     await expect(sidepanel.locator('[data-testid="copy-video-script-btn"]')).toBeVisible();
   });
+
+  test('Draft Cover Letter: displays friendly error message when daily preview attempt limit is reached', async () => {
+    const sidepanel = await openSidepanel(ext.context, ext.extensionId);
+    await seedSession(sidepanel, { isBetaTester: false });
+
+    // Mock draft-cover-letter returning 429 preview limit reached
+    await sidepanel.route('**/functions/v1/draft-cover-letter', async (route) => {
+      await route.fulfill({
+        status: 429,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'daily_cover_letter_preview_limit_reached',
+          code: 'daily_cover_letter_preview_limit_reached',
+          limit: 5,
+          used: 5,
+          message: "You've reached today's preview limit (5 drafts per day). Please try again tomorrow, or upgrade to Pro for unlimited cover letter drafting.",
+        }),
+      });
+    });
+
+    await sidepanel.reload();
+    await sidepanel.waitForLoadState('domcontentloaded');
+
+    // Go to Memory tab
+    await sidepanel.locator('[data-testid="tab-memory-btn"]').click();
+    await expect(sidepanel.locator('text=Draft a cover letter')).toBeVisible();
+
+    // Fill job description and click Generate draft
+    const jdTextarea = sidepanel.locator('textarea[placeholder*="Paste the job description"]');
+    await jdTextarea.fill('We are seeking an experienced Full Stack Engineer to lead web application development with React and TypeScript.');
+
+    const generateBtn = sidepanel.locator('button:has-text("Generate draft")');
+    await expect(generateBtn).toBeEnabled();
+    await generateBtn.click();
+
+    // Verify friendly error message is displayed
+    await expect(
+      sidepanel.locator(
+        "text=You've reached today's preview limit (5 drafts per day). Please try again tomorrow, or upgrade to Pro for unlimited cover letter drafting.",
+      ),
+    ).toBeVisible({ timeout: 5000 });
+  });
 });
+
