@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { SENSITIVE_FACT_KINDS, type DocumentKind, type SensitiveFactKind } from '@jobibi/shared';
+import { type DocumentKind } from '@jobibi/shared';
 import { supabase } from './supabase';
 import { humanizeErrorMessage } from './ingestError';
 import DraftCoverLetter from './DraftCoverLetter';
@@ -18,12 +18,6 @@ interface ChunkRow {
   document_id: string;
 }
 
-interface FactRow {
-  kind: SensitiveFactKind;
-  value: string;
-  stated_at: string;
-}
-
 interface QaRow {
   id: string;
   question_label: string;
@@ -38,13 +32,6 @@ const KIND_LABELS: Record<DocumentKind, string> = {
   transcript: 'Transcript',
 };
 
-const FACT_LABELS: Record<SensitiveFactKind, string> = {
-  salary: 'Salary expectation',
-  notice_period: 'Notice period',
-  work_authorization: 'Work authorization',
-  location: 'Location',
-};
-
 interface MemoryBankProps {
   userId: string;
 }
@@ -52,7 +39,6 @@ interface MemoryBankProps {
 export function MemoryBank({ userId }: MemoryBankProps) {
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [chunks, setChunks] = useState<ChunkRow[]>([]);
-  const [facts, setFacts] = useState<FactRow[]>([]);
   const [qaPairs, setQaPairs] = useState<QaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingQaId, setDeletingQaId] = useState<string | null>(null);
@@ -62,19 +48,16 @@ export function MemoryBank({ userId }: MemoryBankProps) {
   // Accordion open/close state (collapsed by default)
   const [docsOpen, setDocsOpen] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
-  const [factsOpen, setFactsOpen] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [documentsRes, chunksRes, factsRes, qaRes] = await Promise.all([
+    const [documentsRes, chunksRes, qaRes] = await Promise.all([
       supabase.from('documents').select('id, kind, file_name, created_at, storage_path').order('created_at', { ascending: false }),
       supabase.from('memory_chunks').select('id, document_id'),
-      supabase.from('sensitive_facts').select('kind, value, stated_at').order('stated_at', { ascending: false }),
       supabase.from('qa_pairs').select('id, question_label, answer_text, origin, created_at').order('created_at', { ascending: false }),
     ]);
 
     if (!documentsRes.error) setDocuments(documentsRes.data ?? []);
     if (!chunksRes.error) setChunks(chunksRes.data ?? []);
-    if (!factsRes.error) setFacts(factsRes.data ?? []);
     if (!qaRes.error) setQaPairs(qaRes.data ?? []);
     setLoading(false);
   }, []);
@@ -135,11 +118,6 @@ export function MemoryBank({ userId }: MemoryBankProps) {
 
   const chunkCountByDocument = chunks.reduce<Record<string, number>>((acc, chunk) => {
     acc[chunk.document_id] = (acc[chunk.document_id] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  const latestFactByKind = SENSITIVE_FACT_KINDS.reduce<Partial<Record<SensitiveFactKind, FactRow>>>((acc, kind) => {
-    acc[kind] = facts.find((fact) => fact.kind === kind);
     return acc;
   }, {});
 
@@ -291,34 +269,6 @@ export function MemoryBank({ userId }: MemoryBankProps) {
         ) : null}
       </div>
 
-      {/* 4. Collapsible Accordion: Sensitive Facts */}
-      <div className="rounded-[10px] border border-card-border bg-card px-3.5 py-1">
-        <button
-          type="button"
-          onClick={() => setFactsOpen((prev) => !prev)}
-          className="flex w-full items-center justify-between border-none bg-transparent py-2.5 text-left cursor-pointer"
-        >
-          <span className="text-[13.5px] font-bold text-ink">Sensitive facts</span>
-          <span className="text-[12px] text-ink-muted">{factsOpen ? '▾' : '▸'}</span>
-        </button>
-        {factsOpen ? (
-          <div className="flex flex-col gap-1.5 pb-2.5 text-[12.5px] text-ink-secondary">
-            {SENSITIVE_FACT_KINDS.map((kind) => {
-              const fact = latestFactByKind[kind];
-              return (
-                <div key={kind} className="flex items-center justify-between">
-                  <span className="font-semibold text-ink">{FACT_LABELS[kind]}</span>
-                  {fact ? (
-                    <span className="text-ink-secondary">{fact.value}</span>
-                  ) : (
-                    <span className="italic text-ink-disabled">not set</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
     </div>
   );
 }

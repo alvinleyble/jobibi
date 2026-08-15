@@ -72,29 +72,23 @@ test.describe('Safety & Confidence Gating (D16 & D17)', () => {
     expect(titleAttr).toContain('Auto-fill disabled: Low confidence mapping (< 0.75)');
   });
 
-  test('Sensitive gating (D17): sensitive fact outcome renders confirm card and omits Insert button', async () => {
+  test('Salary/notice dynamic refusal: salary questions return refuse outcome requiring direct input', async () => {
     const sidepanel = await openSidepanel(ext.context, ext.extensionId);
     await seedSession(sidepanel, { isBetaTester: true });
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    // Mock suggest Edge function returning outcome: 'confirm'
+    // Mock suggest Edge function returning outcome: 'refuse' for salary (dynamic refusal, no stored fact)
     await sidepanel.route('**/functions/v1/suggest', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          outcome: 'confirm',
-          sensitiveKind: 'salary_expectation',
-          sensitiveVia: 'rule',
-          sensitiveFact: {
-            id: 'fact-salary-1',
-            kind: 'salary_expectation',
-            value: '$130,000 - $140,000 USD',
-            stated_at: '2026-08-14T00:00:00Z',
-            confirmed_at: null,
-            provenanceLine: 'Stated during sixty-second intake',
-          },
+          outcome: 'refuse',
+          questionNorm: 'what are your salary expectations',
+          questionMatch: 0,
+          roleMatch: 0,
+          refuseMessage: 'This asks for your salary expectation — please enter it directly. We don’t auto-suggest for salary.',
         }),
       });
     });
@@ -111,17 +105,16 @@ test.describe('Safety & Confidence Gating (D16 & D17)', () => {
     });
     await expect(salaryCard).toBeVisible({ timeout: 7000 });
 
-    // Click Suggest on sensitive question
+    // Click Suggest on salary question
     await salaryCard.locator('[data-testid="suggest-btn"]').click();
 
-    // Verify sensitive confirm card UI renders
-    await expect(salaryCard.locator('text=Always-confirm — sensitive field')).toBeVisible({ timeout: 5000 });
-    await expect(salaryCard.locator('text=$130,000 - $140,000 USD')).toBeVisible();
-    await expect(salaryCard.locator('text=Stated during sixty-second intake')).toBeVisible();
-    await expect(salaryCard.locator('button', { hasText: 'Confirm still true' })).toBeVisible();
-    await expect(salaryCard.locator('text=This field is never drafted or auto-filled.')).toBeVisible();
+    // Verify refusal card renders with salary-specific message
+    await expect(salaryCard.locator('text=This asks for your salary expectation')).toBeVisible({ timeout: 5000 });
+    await expect(salaryCard.locator('text=please enter it directly')).toBeVisible();
 
-    // Verify Insert button is NOT present
+    // Verify Insert button is NOT present on refusal cards
     await expect(salaryCard.locator('button', { hasText: 'Insert' })).toHaveCount(0);
+    // Verify no Always-Confirm violet card
+    await expect(salaryCard.locator('text=Always-confirm')).toHaveCount(0);
   });
 });

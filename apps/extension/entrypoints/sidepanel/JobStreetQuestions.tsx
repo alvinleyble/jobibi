@@ -160,42 +160,24 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
                 },
               });
               if (error) {
-                type CaptureErrorBody = { message?: string; error?: unknown; droppedSensitive?: number };
+                type CaptureErrorBody = { message?: string; error?: unknown };
                 let body: CaptureErrorBody | null = null;
                 try {
-                  const ctx = (error as unknown as { context?: { json: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } } }).context;
-                  if (ctx?.json) {
-                    try {
-                      body = (await ctx.json()) as CaptureErrorBody | null;
-                    } catch {
-                      try {
-                        body = (await ctx.clone?.()?.json()) as CaptureErrorBody | null;
-                      } catch {}
-                    }
-                  }
+                  const ctx = (error as unknown as { context?: { json: () => Promise<unknown> } }).context;
+                  if (ctx?.json) body = (await ctx.json()) as CaptureErrorBody | null;
                 } catch {}
                 const bodyError = body?.error;
                 const raw = body?.message ?? (typeof bodyError === 'string' ? bodyError : null);
                 const rawMsg = raw ?? (error as unknown as { message?: string }).message ?? String(error);
                 const friendlyMsg = humanizeErrorMessage(rawMsg);
-                if (body?.droppedSensitive) {
-                  setCaptureMsg(`Some answers were not saved because they contain sensitive details (${body.droppedSensitive} item${body.droppedSensitive === 1 ? '' : 's'}). Please confirm them in your sensitive fields.`);
-                } else {
-                  setCaptureMsg(`Could not save application answers: ${friendlyMsg}`);
-                }
+                setCaptureMsg(`Could not save application answers: ${friendlyMsg}`);
                 setTimeout(() => setCaptureMsg(null), 4000);
               } else if (data) {
                 const inserted = (data as { inserted?: number }).inserted ?? 0;
                 const dropped = (data as { droppedMismatched?: number }).droppedMismatched ?? 0;
-                const droppedSensitive = (data as { droppedSensitive?: number }).droppedSensitive ?? 0;
-                const sensitiveRejections = (data as { sensitiveRejections?: Array<{ questionLabel: string; sensitiveKind: string | null }> }).sensitiveRejections ?? [];
-                if (inserted || dropped || droppedSensitive) {
+                if (inserted || dropped) {
                   const parts = [`Saved ${inserted} answer${inserted === 1 ? '' : 's'} to memory`];
                   if (dropped) parts.push(`${dropped} mismatched skipped`);
-                  if (droppedSensitive) {
-                    const kinds = sensitiveRejections.map((r) => r.sensitiveKind).filter(Boolean).join(', ') || 'sensitive';
-                    parts.push(`${droppedSensitive} sensitive not saved — confirm via intake/sensitive card (${kinds})`);
-                  }
                   setCaptureMsg(parts.join(' · '));
                   setTimeout(() => setCaptureMsg(null), 4000);
                 }

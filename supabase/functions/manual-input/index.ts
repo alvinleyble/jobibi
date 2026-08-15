@@ -1,8 +1,7 @@
-// S7A: manual-input — cold raw-text capture for refuse card (D17 storage gate)
+// Manual-input — cold raw-text capture for refuse card
 // User types their own answer on refuse outcome; no anchor chunk exists.
 // Inserts into qa_pairs (origin=user_written) + memory_chunks (type qa_pair) immediately,
-// tagged user-written so it feeds voice profile. Reject-and-redirect via detectSensitiveUnion
-// before any write — value only enters sensitive_facts via sensitive-confirm UI.
+// tagged user-written so it feeds voice profile.
 
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
@@ -10,7 +9,6 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { deriveOrigin } from '../../../packages/shared/src/capture/capture.ts';
-import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -61,58 +59,6 @@ Deno.serve(async (req) => {
     const trimmedAnswer = answerText.trim();
     if (!trimmedAnswer) return jsonResponse({ error: 'Please write an answer before saving.' }, 400);
     const qNorm = normalizeQuestion(qLabel);
-
-    // ── S7A sensitive storage gate (D17) — reject-and-redirect before any insert ──
-    try {
-      const { data: factRows, error: factErr } = await supabase
-        .from('sensitive_facts')
-        .select('id, kind, value, stated_at, confirmed_at, source_application_id')
-        .eq('user_id', user.id)
-        .order('stated_at', { ascending: false });
-      if (factErr) throw factErr;
-      
-      const factList = ((factRows ?? []) as SensitiveFactRow[]).map(toTypedFact);
-      const combinedText = `${qLabel} ${trimmedAnswer}`;
-      const decision = detectSensitiveUnion(combinedText, factList);
-      
-      if (decision.sensitive) {
-        let factPayload: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null = null;
-        if (decision.fact) {
-          factPayload = {
-            id: decision.fact.id,
-            kind: decision.fact.kind,
-            value: decision.fact.value,
-            stated_at: decision.fact.stated_at,
-            confirmed_at: decision.fact.confirmed_at ?? null,
-            provenanceLine: buildProvenanceLine(decision.fact),
-          };
-        }
-        return jsonResponse(
-          {
-            error: 'sensitive_detected',
-            code: 'sensitive_rejected',
-            message: `This answer mentions ${decision.kind ?? 'a sensitive fact'}. To keep memory accurate, confirm it in your sensitive fields first.`,
-            sensitiveKind: decision.kind,
-            sensitiveVia: decision.via,
-            sensitiveFact: factPayload,
-          },
-          409,
-        );
-      }
-    } catch (e) {
-      console.error('[manual-input] sensitive check failed (fail-closed)', e);
-      return jsonResponse(
-        {
-          error: 'sensitive_detected',
-          code: 'sensitive_rejected',
-          message: 'We could not verify if this information is sensitive. Please confirm or update it in your sensitive fields.',
-          sensitiveKind: null,
-          sensitiveVia: null,
-          sensitiveFact: null,
-        },
-        409,
-      );
-    }
 
     // Resolve application id if we have context and caller didn't supply
     let resolvedApplicationId: string | null = applicationId ?? null;

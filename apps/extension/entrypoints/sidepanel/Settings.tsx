@@ -12,22 +12,12 @@ interface SettingsProps {
   userEmail: string;
   isBetaTester: boolean;
   onOpenUsage: () => void;
-  onExportData: () => void;
-  exporting?: boolean;
-  exportSuccess?: string | null;
-  exportError?: string | null;
-  onOpenDeleteModal: () => void;
 }
 
 export function Settings({
   userId,
   isBetaTester,
   onOpenUsage,
-  onExportData,
-  exporting = false,
-  exportSuccess = null,
-  exportError = null,
-  onOpenDeleteModal,
 }: SettingsProps) {
   const [outputLength, setOutputLength] = useState<OutputLength>('short');
   const [savingLength, setSavingLength] = useState(false);
@@ -153,38 +143,6 @@ export function Settings({
         <span className="text-[14px] text-ink-muted">›</span>
       </button>
 
-      {/* Navigation Row: Export My Data */}
-      <button
-        type="button"
-        onClick={onExportData}
-        disabled={exporting}
-        data-testid="export-data-btn"
-        className="flex w-full items-center justify-between rounded-[10px] border border-card-border bg-card p-3.5 text-left transition-colors hover:bg-subtle disabled:opacity-50"
-      >
-        <span className="text-[13.5px] font-bold text-ink">
-          {exporting ? 'Exporting JSON…' : 'Export my data'}
-        </span>
-        <span className="text-[14px] text-ink-muted">›</span>
-      </button>
-      {exportSuccess ? (
-        <p className="rounded bg-success-tint px-2.5 py-1 text-xs font-medium text-success">
-          {exportSuccess}
-        </p>
-      ) : null}
-      {exportError ? (
-        <p className="rounded bg-danger-tint px-2.5 py-1 text-xs text-danger">{exportError}</p>
-      ) : null}
-
-      {/* Navigation Row: Delete Everything */}
-      <button
-        type="button"
-        onClick={onOpenDeleteModal}
-        data-testid="delete-everything-btn"
-        className="flex w-full items-center justify-between rounded-[10px] border border-danger-tint-border bg-danger-tint p-3.5 text-left transition-colors hover:opacity-90"
-      >
-        <span className="text-[13.5px] font-bold text-danger">Delete everything</span>
-        <span className="text-[14px] text-danger">›</span>
-      </button>
     </div>
   );
 }

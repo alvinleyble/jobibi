@@ -2,7 +2,6 @@
 // Stores each submitted answer in qa_pairs with draft_text, origin, edit_distance.
 // Also chunks into memory_chunks for future retrieval.
 // Verifies mapping via client-provided verification flag; drops mismatched writes.
-// S7A: sensitive storage gate — reject-and-redirect via detectSensitiveUnion before any insert (D17).
 
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
@@ -10,7 +9,6 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { deriveOrigin } from '../../../packages/shared/src/capture/capture.ts';
-import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -123,66 +121,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // S7A: fetch sensitive facts once for storage gate — option C: retry once then fail-closed (captain 2026-08-13)
-    let typedFacts: import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact[] = [];
-    let sensitiveFetchFailed = false;
-    {
-      let lastError: unknown = null;
-      let success = false;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const { data: factRows, error: factErr } = await supabase
-            .from('sensitive_facts')
-            .select('id, kind, value, stated_at, confirmed_at, source_application_id')
-            .eq('user_id', user.id)
-            .order('stated_at', { ascending: false })
-            .limit(50);
-          if (factErr) throw factErr;
-          const rows = (factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? [];
-          typedFacts = rows.map((r) => ({
-            id: r.id,
-            kind: r.kind as import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact['kind'],
-            value: r.value,
-            stated_at: r.stated_at,
-            confirmed_at: r.confirmed_at,
-            source_application_id: r.source_application_id,
-          }));
-          success = true;
-          lastError = null;
-          break;
-        } catch (e) {
-          lastError = e;
-          if (attempt === 0) console.warn('[capture] sensitive facts fetch failed, retrying', e);
-          else console.error('[capture] sensitive facts fetch failed after retry (fail-closed)', e);
-        }
-      }
-      if (!success) {
-        sensitiveFetchFailed = true;
-        console.error('[capture] fail-closed after retry, dropping capture batch', lastError);
-      }
-    }
-    if (sensitiveFetchFailed) {
-      return jsonResponse(
-        {
-          error: 'sensitive_detected',
-          code: 'sensitive_rejected',
-          message: 'We could not verify if any answers contain sensitive details. Please try saving again.',
-          sensitiveKind: null,
-          sensitiveVia: null,
-          sensitiveFact: null,
-          inserted: 0,
-          droppedSensitive: answers.length,
-          droppedMismatched: 0,
-        },
-        409,
-      );
-    }
-
     const inserted: string[] = [];
     let droppedMismatched = 0;
-    let droppedSensitive = 0;
     let memoryChunksFailed = 0;
-    const sensitiveRejections: Array<{ questionLabel: string; sensitiveKind: string | null; sensitiveVia: string | null; sensitiveFact: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null }> = [];
 
     for (const ans of answers) {
       // D16: fail closed — only a write explicitly marked verified survives.
@@ -209,49 +150,6 @@ Deno.serve(async (req) => {
 
       const qLabel = ans.questionLabel.trim();
       const qNorm = ans.questionNorm?.trim() ? ans.questionNorm!.trim() : normalizeQuestion(qLabel);
-
-      // S7A sensitive storage gate — reject-and-redirect before any write
-      // Check combined question+answer (covers both question-sensitive and answer-sensitive)
-      // Never silently reclassify into sensitive_facts; just drop and route to confirm UI.
-      const combinedForSensitive = `${qLabel} ${trimmedAnswer}`;
-      let sensitiveHit: ReturnType<typeof detectSensitiveUnion> | null = null;
-      try {
-        // check combined first, then individual to prioritize any hit
-        const c = detectSensitiveUnion(combinedForSensitive, typedFacts);
-        if (c.isSensitive) sensitiveHit = c;
-        else {
-          const a = detectSensitiveUnion(trimmedAnswer, typedFacts);
-          if (a.isSensitive) sensitiveHit = a;
-          else {
-            const q = detectSensitiveUnion(qLabel, typedFacts);
-            if (q.isSensitive) sensitiveHit = q;
-          }
-        }
-      } catch (e) {
-        console.error('[capture] sensitive check error (fail-closed)', e);
-        sensitiveHit = { isSensitive: true, kind: null, via: null, ruleHit: null, retrievalHit: null, fact: null };
-      }
-      if (sensitiveHit?.isSensitive) {
-        droppedSensitive++;
-        let factPayload: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null = null;
-        if (sensitiveHit.fact) {
-          factPayload = {
-            id: sensitiveHit.fact.id,
-            kind: sensitiveHit.fact.kind,
-            value: sensitiveHit.fact.value,
-            stated_at: sensitiveHit.fact.stated_at,
-            confirmed_at: sensitiveHit.fact.confirmed_at ?? null,
-            provenanceLine: buildProvenanceLine(sensitiveHit.fact),
-          };
-        }
-        sensitiveRejections.push({
-          questionLabel: qLabel,
-          sensitiveKind: sensitiveHit.kind,
-          sensitiveVia: sensitiveHit.via,
-          sensitiveFact: factPayload,
-        });
-        continue;
-      }
 
       const { origin, editDistance } = deriveOrigin(ans.draftText ?? null, trimmedAnswer);
 
@@ -357,9 +255,9 @@ Deno.serve(async (req) => {
       inserted: inserted.length,
       insertedIds: inserted,
       droppedMismatched,
-      droppedSensitive,
+      droppedSensitive: 0,
       memoryChunksFailed,
-      sensitiveRejections,
+      sensitiveRejections: [],
       mismatchesLogged: mismatches?.length ?? 0,
     }, 200);
   } catch (e) {

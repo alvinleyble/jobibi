@@ -51,8 +51,6 @@ test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
 
     await expect(sidepanel.locator('text=Drafting length')).toBeVisible();
     await expect(sidepanel.locator('[data-testid="settings-usage-btn"]')).toBeVisible();
-    await expect(sidepanel.locator('[data-testid="export-data-btn"]')).toBeVisible();
-    await expect(sidepanel.locator('[data-testid="delete-everything-btn"]')).toBeVisible();
 
     // 3. Drill into Usage & Quotas sub-screen
     await sidepanel.locator('[data-testid="settings-usage-btn"]').click();
@@ -148,7 +146,9 @@ test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    await sidepanel.locator('[data-testid="tab-settings-btn"]').click();
+    // Open Account view via avatar where export/delete rows now live
+    await sidepanel.locator('[data-testid="avatar-btn"]').click();
+    await expect(sidepanel.locator('[data-testid="delete-everything-btn"]')).toBeVisible();
 
     // Click Delete Everything button
     await sidepanel.locator('[data-testid="delete-everything-btn"]').click();
