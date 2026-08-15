@@ -68,11 +68,13 @@ test.describe('Auto-Fill (S11) Injection', () => {
 
     // Bring sidepanel forward and verify question is extracted
     await sidepanel.bringToFront();
-    const qCard = sidepanel.locator('li', { hasText: 'Why do you want to work at TechCorp?' });
+    const qCard = sidepanel.locator('[data-testid="question-card"]', {
+      hasText: 'Why do you want to work at TechCorp?',
+    });
     await expect(qCard).toBeVisible({ timeout: 7000 });
 
     // Click Suggest
-    await qCard.locator('button', { hasText: 'Suggest' }).click();
+    await qCard.locator('[data-testid="suggest-btn"]').click();
 
     // Verify draft appears
     await expect(qCard.locator(`text=${draftAnswer}`)).toBeVisible({ timeout: 5000 });
@@ -98,7 +100,7 @@ test.describe('Auto-Fill (S11) Injection', () => {
     expect(eventLog.some((e: any) => e.type === 'blur')).toBe(true);
   });
 
-  test('Non-beta tester: Insert button is not rendered on draft cards', async () => {
+  test('Non-beta tester: Insert 🔒 PRO button is rendered on draft cards and shows educational notice on click', async () => {
     const sidepanel = await openSidepanel(ext.context, ext.extensionId);
     await seedSession(sidepanel, { isBetaTester: false });
     await sidepanel.reload();
@@ -124,13 +126,21 @@ test.describe('Auto-Fill (S11) Injection', () => {
     await atsPage.waitForLoadState('domcontentloaded');
 
     await sidepanel.bringToFront();
-    const qCard = sidepanel.locator('li', { hasText: 'Why do you want to work at TechCorp?' });
+    const qCard = sidepanel.locator('[data-testid="question-card"]', {
+      hasText: 'Why do you want to work at TechCorp?',
+    });
     await expect(qCard).toBeVisible({ timeout: 7000 });
 
-    await qCard.locator('button', { hasText: 'Suggest' }).click();
+    await qCard.locator('[data-testid="suggest-btn"]').click();
     await expect(qCard.locator(`text=${draftAnswer}`)).toBeVisible({ timeout: 5000 });
 
-    // Insert button should NOT be present for non-beta users
-    await expect(qCard.locator('button', { hasText: 'Insert' })).toHaveCount(0);
+    // Insert 🔒 PRO button should be present for non-beta users
+    const lockedBtn = qCard.locator('button', { hasText: 'Insert' });
+    await expect(lockedBtn).toBeVisible();
+    await expect(lockedBtn.locator('text=🔒 PRO')).toBeVisible();
+
+    // Clicking shows educational toast notice
+    await lockedBtn.click();
+    await expect(sidepanel.locator('text=1-Click Auto-Fill is a Pro feature (Included in Beta)')).toBeVisible({ timeout: 4000 });
   });
 });

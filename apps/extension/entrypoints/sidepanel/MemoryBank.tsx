@@ -47,13 +47,17 @@ interface MemoryBankProps {
   userId: string;
 }
 
-function MemoryBank({ userId }: MemoryBankProps) {
+export function MemoryBank({ userId }: MemoryBankProps) {
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [chunks, setChunks] = useState<ChunkRow[]>([]);
   const [facts, setFacts] = useState<FactRow[]>([]);
   const [qaPairs, setQaPairs] = useState<QaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingQaId, setDeletingQaId] = useState<string | null>(null);
+
+  // Accordion open/close state (collapsed by default)
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [factsOpen, setFactsOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const [documentsRes, chunksRes, factsRes, qaRes] = await Promise.all([
@@ -107,106 +111,116 @@ function MemoryBank({ userId }: MemoryBankProps) {
   }, {});
 
   return (
-    <div className="flex w-full max-w-md flex-col gap-3 p-4">
+    <div data-screen-label="Memory" className="flex flex-col gap-3">
+      {/* 1. Upload Dropzone */}
       <UploadDocument userId={userId} onIngested={refresh} />
-      {/* S8: Draft Cover Letter — separate section, not folded into Upload.
-          Upload is one-shot ingestion; this is a compose-review-decide
-          workflow (paste JD → generate → edit → accept/discard) and does
-          not fit the same card. Adapter-independent: works the same on every
-          job site. Paste-always (no LinkedIn auto-fill) keeps S8 independent
-          of S7; LinkedIn auto-fill is a separable future follow-up. */}
+
+      {/* 2. Draft Cover Letter Card */}
       <DraftCoverLetter onStored={refresh} />
 
-      {/* Stored Q&A Answers with Per-Answer Deletion (D12) */}
-      <div className="flex flex-col gap-2 rounded border border-slate-200 p-3 bg-white">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Stored Answers (Q&amp;A) ({qaPairs.length})
-          </h2>
-        </div>
-        <p className="text-[10px] text-slate-500">
-          Answers captured from your applications or manually entered. Deleting purges them permanently from memory and vector retrieval.
-        </p>
+      {/* 3. Stored Answers Card */}
+      <div className="flex flex-col gap-2.5 rounded-[10px] border border-card-border bg-card p-3.5">
+        <h3 className="text-[13.5px] font-bold text-ink">
+          Stored answers · {qaPairs.length}
+        </h3>
 
         {loading ? (
-          <p className="text-xs text-slate-500">Loading…</p>
+          <p className="text-xs text-ink-muted">Loading…</p>
         ) : qaPairs.length === 0 ? (
-          <p className="text-xs text-slate-400 italic">No stored Q&amp;A answers yet.</p>
+          <p className="text-xs italic text-ink-muted">No stored Q&amp;A answers yet.</p>
         ) : (
-          <div className="flex flex-col gap-2 mt-1">
+          <div className="flex flex-col gap-2">
             {qaPairs.map((qa) => (
               <div
                 key={qa.id}
                 data-testid={`qa-item-${qa.id}`}
-                className="flex items-start justify-between gap-2 rounded border border-slate-200 bg-slate-50 p-2.5 text-xs text-left"
+                className="flex flex-col rounded-lg border border-card-border bg-subtle p-2.5 text-xs text-left"
               >
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-800 break-words">Q: {qa.question_label}</p>
-                  <p className="mt-1 text-slate-700 whitespace-pre-wrap break-words">A: {qa.answer_text}</p>
-                  <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-slate-500">
-                    <span className="rounded bg-white px-1.5 py-0.5 border text-slate-600 font-mono">
-                      {qa.origin}
-                    </span>
-                    <span>{new Date(qa.created_at).toLocaleDateString()}</span>
-                  </div>
+                <p className="font-bold text-ink break-words text-[12.5px]">Q: {qa.question_label}</p>
+                <p className="mt-1 text-ink-secondary whitespace-pre-wrap break-words leading-[1.45] text-[12.5px]">
+                  A: {qa.answer_text}
+                </p>
+                <div className="mt-1.5 flex items-center justify-between">
+                  <span className="text-[11px] text-ink-muted">
+                    Captured · {new Date(qa.created_at).toLocaleDateString()}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => deleteQaPair(qa)}
+                    disabled={deletingQaId === qa.id}
+                    aria-label={`Delete answer for ${qa.question_label}`}
+                    title="Delete answer"
+                    data-testid={`delete-qa-btn-${qa.id}`}
+                    className="border-none bg-transparent text-[12px] font-bold text-delete-text hover:underline cursor-pointer disabled:opacity-50"
+                  >
+                    {deletingQaId === qa.id ? 'Deleting…' : 'Delete'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => deleteQaPair(qa)}
-                  disabled={deletingQaId === qa.id}
-                  aria-label={`Delete answer for ${qa.question_label}`}
-                  title="Delete answer (purges from vector memory)"
-                  data-testid={`delete-qa-btn-${qa.id}`}
-                  className="shrink-0 rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 transition-colors"
-                >
-                  {deletingQaId === qa.id ? '…' : '🗑️'}
-                </button>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      <div className="flex flex-col gap-2 rounded border border-slate-200 p-3">
-        <h2 className="text-sm font-semibold text-slate-900">Memory bank (debug)</h2>
-        {loading ? (
-          <p className="text-xs text-slate-500">Loading…</p>
-        ) : (
-          <>
-            <div>
-              <h3 className="text-xs font-medium text-slate-700">
-                Documents ({documents.length}), chunks ({chunks.length})
-              </h3>
-              {documents.length === 0 ? (
-                <p className="text-xs text-slate-500">No documents uploaded yet.</p>
-              ) : (
-                <ul className="mt-1 flex flex-col gap-1">
-                  {documents.map((doc) => (
-                    <li key={doc.id} className="text-xs text-slate-600">
-                      <span className="font-medium">{KIND_LABELS[doc.kind]}</span> — {doc.file_name} —{' '}
-                      {chunkCountByDocument[doc.id] ?? 0} chunk{(chunkCountByDocument[doc.id] ?? 0) === 1 ? '' : 's'}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+      {/* 4. Collapsible Accordion: Uploaded Documents */}
+      <div className="rounded-[10px] border border-card-border bg-card px-3.5 py-1">
+        <button
+          type="button"
+          onClick={() => setDocsOpen((prev) => !prev)}
+          className="flex w-full items-center justify-between border-none bg-transparent py-2.5 text-left cursor-pointer"
+        >
+          <span className="text-[13.5px] font-bold text-ink">
+            Documents · {documents.length}
+          </span>
+          <span className="text-[12px] text-ink-muted">{docsOpen ? '▾' : '▸'}</span>
+        </button>
+        {docsOpen ? (
+          <div className="flex flex-col gap-1 pb-2.5 text-[12.5px] text-ink-secondary">
+            {documents.length === 0 ? (
+              <p className="italic text-ink-muted">No documents uploaded yet.</p>
+            ) : (
+              documents.map((doc) => (
+                <div key={doc.id} className="flex items-center justify-between">
+                  <span>
+                    {KIND_LABELS[doc.kind]} — {doc.file_name}
+                  </span>
+                  <span className="text-[11px] text-ink-muted">
+                    {chunkCountByDocument[doc.id] ?? 0} chunk{(chunkCountByDocument[doc.id] ?? 0) === 1 ? '' : 's'}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
+      </div>
 
-            <div>
-              <h3 className="text-xs font-medium text-slate-700">Sensitive facts</h3>
-              <ul className="mt-1 flex flex-col gap-1">
-                {SENSITIVE_FACT_KINDS.map((kind) => {
-                  const fact = latestFactByKind[kind];
-                  return (
-                    <li key={kind} className="text-xs text-slate-600">
-                      <span className="font-medium">{FACT_LABELS[kind]}:</span>{' '}
-                      {fact ? fact.value : <span className="italic text-slate-400">not set</span>}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          </>
-        )}
+      {/* 5. Collapsible Accordion: Sensitive Facts */}
+      <div className="rounded-[10px] border border-card-border bg-card px-3.5 py-1">
+        <button
+          type="button"
+          onClick={() => setFactsOpen((prev) => !prev)}
+          className="flex w-full items-center justify-between border-none bg-transparent py-2.5 text-left cursor-pointer"
+        >
+          <span className="text-[13.5px] font-bold text-ink">Sensitive facts</span>
+          <span className="text-[12px] text-ink-muted">{factsOpen ? '▾' : '▸'}</span>
+        </button>
+        {factsOpen ? (
+          <div className="flex flex-col gap-1.5 pb-2.5 text-[12.5px] text-ink-secondary">
+            {SENSITIVE_FACT_KINDS.map((kind) => {
+              const fact = latestFactByKind[kind];
+              return (
+                <div key={kind} className="flex items-center justify-between">
+                  <span className="font-semibold text-ink">{FACT_LABELS[kind]}</span>
+                  {fact ? (
+                    <span className="text-ink-secondary">{fact.value}</span>
+                  ) : (
+                    <span className="italic text-ink-disabled">not set</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </div>
   );

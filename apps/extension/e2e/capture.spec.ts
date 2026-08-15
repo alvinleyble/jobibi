@@ -68,7 +68,7 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
 
     // Verify sidepanel receives capture and invokes edge function with correct payload
     await sidepanel.bringToFront();
-    await expect(sidepanel.locator('text=Capture: 2 saved')).toBeVisible({ timeout: 7000 });
+    await expect(sidepanel.locator('text=Saved 2 answers to memory')).toBeVisible({ timeout: 7000 });
 
     // Verify capture request body structure and invariants
     expect(captureRequestBody).not.toBeNull();
