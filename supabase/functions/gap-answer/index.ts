@@ -9,6 +9,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { keywordOverlap, cosine, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
+import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
 import {
   OUTPUT_LENGTH_CONFIG,
   trimGracefully,
