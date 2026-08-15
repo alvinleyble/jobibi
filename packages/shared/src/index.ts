@@ -86,6 +86,7 @@ export {
   WEEKLY_COVER_LETTER_LIMIT,
   VIDEO_QUESTION_KEYWORDS,
   isVideoQuestion,
+  trimGracefully,
 } from './settings/settings.ts';
 export type { OutputLength, OutputLengthConfig } from './settings/settings.ts';
 

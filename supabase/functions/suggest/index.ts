@@ -15,6 +15,7 @@ import {
   OUTPUT_LENGTH_CONFIG,
   DAILY_SUGGESTION_LIMIT,
   isVideoQuestion,
+  trimGracefully,
 } from '../../../packages/shared/src/settings/settings.ts';
 import type { OutputLength } from '../../../packages/shared/src/settings/settings.ts';
 
@@ -574,11 +575,9 @@ Deno.serve(async (req) => {
       console.error('[suggest] Model returned non-JSON:', content);
       return jsonResponse({ error: 'Something went wrong while formatting your suggestion. Please try again.' }, 502);
     }
-    let answer = (parsedContent.answer ?? '').slice(0, maxAnswerChars);
+    const answer = trimGracefully(parsedContent.answer ?? '', maxAnswerChars);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'memory_chunk', label: 'Your history', ref: 'memory' }];
-
-    if (answer.length > maxAnswerChars) answer = answer.slice(0, maxAnswerChars);
 
     return jsonResponse(
       SuggestResponseSchema.parse({

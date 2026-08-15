@@ -9,8 +9,10 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { keywordOverlap, cosine, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
-import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
-import { OUTPUT_LENGTH_CONFIG } from '../../../packages/shared/src/settings/settings.ts';
+import {
+  OUTPUT_LENGTH_CONFIG,
+  trimGracefully,
+} from '../../../packages/shared/src/settings/settings.ts';
 import type { OutputLength } from '../../../packages/shared/src/settings/settings.ts';
 
 declare const Supabase: {
@@ -325,8 +327,7 @@ Deno.serve(async (req) => {
       console.error('[gap-answer] Model returned non-JSON:', content);
       return jsonResponse({ error: 'Something went wrong while formatting your draft. Please try submitting again.' }, 502);
     }
-    let draftedAnswer = (parsedContent.answer ?? '').slice(0, maxAnswerChars);
-    if (draftedAnswer.length > maxAnswerChars) draftedAnswer = draftedAnswer.slice(0, maxAnswerChars);
+    const draftedAnswer = trimGracefully(parsedContent.answer ?? '', maxAnswerChars);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'gap_answer', label: 'Your gap answer', ref: (gapRow as { id: string }).id }];
 

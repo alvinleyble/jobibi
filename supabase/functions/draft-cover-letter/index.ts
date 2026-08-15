@@ -12,6 +12,7 @@ import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/sr
 import {
   OUTPUT_LENGTH_CONFIG,
   WEEKLY_COVER_LETTER_LIMIT,
+  trimGracefully,
   type OutputLength,
 } from '../../../packages/shared/src/settings/settings.ts';
 
@@ -280,7 +281,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const draft = (parsedContent.draft ?? '').slice(0, lengthConfig.maxChars);
+    const draft = trimGracefully(parsedContent.draft ?? '', lengthConfig.maxChars);
     const sources = parsedContent.sources ?? [{ kind: 'memory_chunk', label: 'Your history', ref: 'memory' }];
 
     return jsonResponse(
