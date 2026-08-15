@@ -79,6 +79,15 @@
   5. **Memory Tab 2 & Settings Tab 3**: Rebuilt dashed dropzone upload card, Draft Cover Letter card, Stored answers list with per-answer deletion, collapsible accordions for Uploaded Documents and Sensitive Facts; built Settings view with Drafting Preferences (Short, Standard/Medium `[PRO]`, Long `[PRO]`), navigation rows for Usage & Quotas ›, Export my data ›, and Delete everything › (with modal requiring typing "DELETE").
   6. **Automated Verification**: All 185 unit tests passing (`pnpm test`), full TypeScript compilation passing with 0 errors (`pnpm compile`), and all 19 Playwright E2E tests passing in 24s (`pnpm test:e2e`).
 
+- 2026-08-15 — **Output length calibration & clean drafting post-processing completed** on branch `fm/jobibi-output-length-calibration` (PR #33). Fixed output length calibration, eliminated mid-word cutoffs, and added token headroom & robust parsing across all drafting endpoints:
+  1. **Calibrated `OUTPUT_LENGTH_CONFIG` (`packages/shared/src/settings/settings.ts`)**: Updated character envelopes to match standard English prose (6 chars/word):
+     - `short`: `50–200 words`, `maxTokens: 300`, `maxChars: 1200` (increased from 600).
+     - `medium`: `200–450 words`, `maxTokens: 600`, `maxChars: 2700` (increased from 1500).
+     - `long`: `450–700 words`, `maxTokens: 900`, `maxChars: 4200` (increased from 2500).
+  2. **Clean Drafting Post-Processing (`trimGracefully`)**: Added `trimGracefully` in `@jobibi/shared` to trim gracefully at sentence (`[.!?]`), paragraph (`\n`), or word (` `) boundaries when text exceeds `maxChars` upper bounds, eliminating blind `slice(0, maxChars)` substring slicing across `supabase/functions/draft-cover-letter`, `supabase/functions/suggest`, and `supabase/functions/gap-answer`.
+  3. **JSON Token Headroom & Robust Parsing**: Set `max_completion_tokens: Math.max(800, maxTokens + 400)` across `suggest` and `gap-answer` (matching `draft-cover-letter`) to guarantee Luna completes structured JSON generation without token exhaustion, and added markdown code-fence stripping and brace-fallback parsing before `JSON.parse()`.
+  4. **Verification & Testing**: Added comprehensive unit tests in `packages/shared/src/settings/settings.test.ts`. All 193 unit tests passing (`pnpm test`), full TypeScript compilation passing with 0 errors (`pnpm compile`), and all 19 Playwright E2E tests passing in 24s (`pnpm test:e2e`).
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -90,5 +99,6 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete. All 185 unit tests and 19 Playwright E2E tests passing with 0 errors.
+S1 through S13 complete + PR #33 output length calibration. All 193 unit tests and 19 Playwright E2E tests passing with 0 errors.
+
 

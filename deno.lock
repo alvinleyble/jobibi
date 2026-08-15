@@ -428,6 +428,11 @@
       "npm:fflate@0.8.3",
       "npm:unpdf@0.12.2",
       "npm:zod@4.1.13"
-    ]
+    ],
+    "packageJson": {
+      "dependencies": [
+        "npm:@playwright/test@^1.62.1"
+      ]
+    }
   }
 }

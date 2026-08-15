@@ -10,7 +10,10 @@ import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { keywordOverlap, cosine, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
 import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
-import { OUTPUT_LENGTH_CONFIG } from '../../../packages/shared/src/settings/settings.ts';
+import {
+  OUTPUT_LENGTH_CONFIG,
+  trimGracefully,
+} from '../../../packages/shared/src/settings/settings.ts';
 import type { OutputLength } from '../../../packages/shared/src/settings/settings.ts';
 
 declare const Supabase: {
@@ -270,7 +273,7 @@ Deno.serve(async (req) => {
     const system = `${styleBlock}You are Jobibi, an editor of the user's best self. Draft only from the user's retrieved snippets below (first snippet is the user's fresh answer to your gap question, so use it). Never invent. Keep answer ${wordInstruction}. Also return a ${MAX_SKELETON_BULLETS}-bullet skeleton and sources.${styleProfileMd ? ' Match the style profile voice.' : ''}`;
     const payload = {
       model: 'gpt-5.6-luna',
-      max_completion_tokens: maxTokens,
+      max_completion_tokens: Math.max(800, maxTokens + 400),
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -316,17 +319,57 @@ Deno.serve(async (req) => {
       console.error('[gap-answer] OpenAI API error:', resp.status, text);
       return jsonResponse({ error: 'We could not generate your answer draft right now. Please try again in a moment.' }, 502);
     }
-    const data = (await resp.json()) as { choices: { message: { content: string } }[] };
-    const content = data.choices?.[0]?.message?.content ?? '';
-    let parsedContent: { answer: string; skeleton: string[]; sources: { kind: string; label: string; ref: string }[] };
-    try {
-      parsedContent = JSON.parse(content);
-    } catch {
-      console.error('[gap-answer] Model returned non-JSON:', content);
-      return jsonResponse({ error: 'Something went wrong while formatting your draft. Please try submitting again.' }, 502);
+    const data = (await resp.json()) as {
+      choices?: {
+        message?: { content?: string | null; refusal?: string | null };
+        finish_reason?: string | null;
+      }[];
+    };
+
+    const choice = data.choices?.[0];
+    if (!choice) {
+      console.error('[gap-answer] No response choices returned by model');
+      return jsonResponse({ error: 'We could not generate your answer draft right now. Please try again in a moment.' }, 502);
     }
-    let draftedAnswer = (parsedContent.answer ?? '').slice(0, maxAnswerChars);
-    if (draftedAnswer.length > maxAnswerChars) draftedAnswer = draftedAnswer.slice(0, maxAnswerChars);
+
+    if (choice.message?.refusal) {
+      console.error('[gap-answer] Model refusal:', choice.message.refusal);
+      return jsonResponse({ error: 'Jobibi was unable to draft an answer for this question. Please try again.' }, 502);
+    }
+
+    const rawContent = choice.message?.content?.trim() ?? '';
+    if (!rawContent) {
+      console.error('[gap-answer] Empty content from model');
+      return jsonResponse({ error: 'We could not generate your answer draft. Please try submitting again.' }, 502);
+    }
+
+    // Strip markdown code fences if present
+    let jsonStr = rawContent;
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    }
+
+    let parsedContent: { answer?: string; skeleton?: string[]; sources?: { kind: string; label: string; ref: string }[] };
+    try {
+      parsedContent = JSON.parse(jsonStr);
+    } catch {
+      // Fallback: extract substring between first '{' and last '}'
+      const firstBrace = jsonStr.indexOf('{');
+      const lastBrace = jsonStr.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          parsedContent = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
+        } catch {
+          console.error('[gap-answer] Model returned non-JSON:', rawContent);
+          return jsonResponse({ error: 'Something went wrong while formatting your draft. Please try submitting again.' }, 502);
+        }
+      } else {
+        console.error('[gap-answer] Model returned non-JSON:', rawContent);
+        return jsonResponse({ error: 'Something went wrong while formatting your draft. Please try submitting again.' }, 502);
+      }
+    }
+
+    const draftedAnswer = trimGracefully(parsedContent.answer ?? '', maxAnswerChars);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'gap_answer', label: 'Your gap answer', ref: (gapRow as { id: string }).id }];
 
