@@ -123,37 +123,34 @@ export function MemoryBank({ userId }: MemoryBankProps) {
         await supabase.from('qa_pairs').delete().in('id', ids).eq('user_id', userId);
       }
       // Purge associated memory_chunks entries (D12)
-      // Fetch candidate chunks and filter by normalized question
+      // Fetch candidate chunks and match against every item in the group,
+      // not just the group's representative normalized question — near-duplicate
+      // grouping can fold items whose own normalized questions differ.
       const { data: chunkRows } = await supabase
         .from('memory_chunks')
         .select('id, text')
         .eq('user_id', userId)
         .eq('type', 'qa_pair');
+      const itemNorms = new Set(group.items.map((qa) => normalizeQuestion(qa.question_label)));
+      const itemTexts = new Set(group.items.map((qa) => `Q: ${qa.question_label}\nA: ${qa.answer_text}`));
       const toDelete: string[] = [];
       if (chunkRows) {
         for (const ch of chunkRows as Array<{ id: string; text: string }>) {
           const qPart = ch.text.startsWith('Q: ') ? (ch.text.split('\nA:')[0]?.slice(2).trim() ?? ch.text) : ch.text;
-          if (normalizeQuestion(qPart) === group.normalizedQuestion) toDelete.push(ch.id);
-        }
-        // fallback: if no normalized match but text contains exact label, also match
-        if (toDelete.length === 0) {
-          for (const ch of chunkRows as Array<{ id: string; text: string }>) {
-            if (ch.text === `Q: ${group.items[0]?.question_label}\nA: ${group.items[0]?.answer_text}`) toDelete.push(ch.id);
-          }
+          if (itemNorms.has(normalizeQuestion(qPart)) || itemTexts.has(ch.text)) toDelete.push(ch.id);
         }
       }
-      // Also attempt direct text-equality deletes per item as fallback (covers case where fetch fails)
       if (toDelete.length) {
         await supabase.from('memory_chunks').delete().in('id', toDelete);
-      } else {
-        for (const qa of group.items) {
-          await supabase
-            .from('memory_chunks')
-            .delete()
-            .eq('user_id', userId)
-            .eq('type', 'qa_pair')
-            .eq('text', `Q: ${qa.question_label}\nA: ${qa.answer_text}`);
-        }
+      }
+      // Fallback direct text-equality deletes per item, covering the case where the fetch above failed or missed rows.
+      for (const qa of group.items) {
+        await supabase
+          .from('memory_chunks')
+          .delete()
+          .eq('user_id', userId)
+          .eq('type', 'qa_pair')
+          .eq('text', `Q: ${qa.question_label}\nA: ${qa.answer_text}`);
       }
       await refresh();
     } catch (e) {
