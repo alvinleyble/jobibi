@@ -116,7 +116,7 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit. All 194 unit tests and 20 Playwright E2E tests passing with 0 errors.
+S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown. All 199 unit tests and 21 Playwright E2E tests passing with 0 errors.
 
 
 
