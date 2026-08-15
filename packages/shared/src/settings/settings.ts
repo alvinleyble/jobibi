@@ -36,7 +36,8 @@ export const OUTPUT_LENGTH_CONFIG: Record<OutputLength, OutputLengthConfig> = {
 };
 
 export const DAILY_SUGGESTION_LIMIT = 15;
-export const WEEKLY_COVER_LETTER_LIMIT = 1;
+export const DAILY_COVER_LETTER_LIMIT = 1;
+export const DAILY_COVER_LETTER_ATTEMPT_LIMIT = 5;
 
 export const VIDEO_QUESTION_KEYWORDS = [
   'record a video',

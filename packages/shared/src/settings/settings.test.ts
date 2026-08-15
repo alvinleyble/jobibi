@@ -3,7 +3,8 @@ import {
   OUTPUT_LENGTHS,
   OUTPUT_LENGTH_CONFIG,
   DAILY_SUGGESTION_LIMIT,
-  WEEKLY_COVER_LETTER_LIMIT,
+  DAILY_COVER_LETTER_LIMIT,
+  DAILY_COVER_LETTER_ATTEMPT_LIMIT,
   isVideoQuestion,
   trimGracefully,
 } from './settings';
@@ -35,7 +36,8 @@ describe('settings & caps', () => {
 
   it('defines correct limits', () => {
     expect(DAILY_SUGGESTION_LIMIT).toBe(15);
-    expect(WEEKLY_COVER_LETTER_LIMIT).toBe(1);
+    expect(DAILY_COVER_LETTER_LIMIT).toBe(1);
+    expect(DAILY_COVER_LETTER_ATTEMPT_LIMIT).toBe(5);
   });
 
   it('detects video questions correctly', () => {

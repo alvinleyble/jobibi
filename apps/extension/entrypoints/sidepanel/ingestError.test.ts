@@ -54,6 +54,23 @@ describe('describeIngestError', () => {
     expect(message).toBe(pdfMsg);
   });
 
+  it('surfaces user-friendly message when error is a code and message is descriptive', async () => {
+    const response = new Response(
+      JSON.stringify({
+        error: 'daily_cover_letter_preview_limit_reached',
+        code: 'daily_cover_letter_preview_limit_reached',
+        limit: 5,
+        used: 5,
+        message: "You've reached today's preview limit (5 drafts per day). Please try again tomorrow, or upgrade to Pro for unlimited cover letter drafting.",
+      }),
+      { status: 429 },
+    );
+    const message = await describeIngestError(new FunctionsHttpError(response));
+    expect(message).toBe(
+      "You've reached today's preview limit (5 drafts per day). Please try again tomorrow, or upgrade to Pro for unlimited cover letter drafting.",
+    );
+  });
+
   it('falls back to a friendly message when the response body has no error field', async () => {
     const response = new Response(JSON.stringify({ unrelated: true }), { status: 500 });
     const message = await describeIngestError(new FunctionsHttpError(response));

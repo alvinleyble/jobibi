@@ -45,8 +45,8 @@ export async function describeIngestError(error: unknown): Promise<string> {
   if (error instanceof FunctionsHttpError) {
     try {
       const body = await error.context.clone().json();
-      if (typeof body?.error === 'string') return humanizeErrorMessage(body.error);
-      if (typeof body?.message === 'string') return humanizeErrorMessage(body.message);
+      if (typeof body?.message === 'string' && body.message.trim()) return humanizeErrorMessage(body.message);
+      if (typeof body?.error === 'string' && body.error.trim()) return humanizeErrorMessage(body.error);
     } catch {
       // fall through to the friendly generic message below
     }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { DAILY_SUGGESTION_LIMIT, WEEKLY_COVER_LETTER_LIMIT } from '@jobibi/shared';
+import { DAILY_SUGGESTION_LIMIT, DAILY_COVER_LETTER_LIMIT } from '@jobibi/shared';
 import { supabase } from './supabase';
 
 interface UsageQuotasViewProps {
@@ -25,14 +25,13 @@ export function UsageQuotasView({ userId, isBetaTester }: UsageQuotasViewProps) 
         .gte('created_at', todayUtc.toISOString())) as unknown as { count: number | null };
       setDailyDecisionsUsed(dailyCount ?? 0);
 
-      // 2. Weekly cover letters count
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      // 2. Daily cover letters count
       const { count: coverCount } = (await supabase
         .from('documents')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId)
         .eq('kind', 'cover_letter')
-        .gte('created_at', sevenDaysAgo)) as unknown as { count: number | null };
+        .gte('created_at', todayUtc.toISOString())) as unknown as { count: number | null };
       setCoverLettersUsed(coverCount ?? 0);
     } catch {
       // ignore
@@ -46,10 +45,10 @@ export function UsageQuotasView({ userId, isBetaTester }: UsageQuotasViewProps) 
   }, [fetchQuotas]);
 
   const dailyRemaining = Math.max(0, DAILY_SUGGESTION_LIMIT - dailyDecisionsUsed);
-  const coverRemaining = Math.max(0, WEEKLY_COVER_LETTER_LIMIT - coverLettersUsed);
+  const coverRemaining = Math.max(0, DAILY_COVER_LETTER_LIMIT - coverLettersUsed);
 
   const dailyPercent = isBetaTester ? 0 : Math.min(100, (dailyDecisionsUsed / DAILY_SUGGESTION_LIMIT) * 100);
-  const coverPercent = isBetaTester ? 0 : Math.min(100, (coverLettersUsed / WEEKLY_COVER_LETTER_LIMIT) * 100);
+  const coverPercent = isBetaTester ? 0 : Math.min(100, (coverLettersUsed / DAILY_COVER_LETTER_LIMIT) * 100);
 
   return (
     <div data-screen-label="Usage and Quotas" className="flex flex-col gap-3">
@@ -73,19 +72,19 @@ export function UsageQuotasView({ userId, isBetaTester }: UsageQuotasViewProps) 
 
       {/* Cover Letter Drafting Card */}
       <div className="rounded-[10px] border border-card-border bg-card p-3.5">
-        <h3 className="text-[13.5px] font-bold text-ink">Cover letter drafting</h3>
+        <h3 className="text-[13.5px] font-bold text-ink">Daily cover letters</h3>
         <div className="mt-2 h-2 w-full overflow-hidden rounded-md bg-recess">
           <div
             className="h-full bg-accent transition-all duration-300"
             style={{ width: `${coverPercent}%` }}
           />
         </div>
-        <p className="mt-1.5 text-[12px] text-ink-muted" data-testid="weekly-cover-quota-status">
+        <p className="mt-1.5 text-[12px] text-ink-muted" data-testid="daily-cover-quota-status">
           {loading
             ? 'Loading quota…'
             : isBetaTester
               ? '📄 Unlimited (Beta Tester)'
-              : `📄 ${coverLettersUsed} of ${WEEKLY_COVER_LETTER_LIMIT} used this week (${coverRemaining} remaining) · resets in 7 days`}
+              : `📄 ${coverLettersUsed} of ${DAILY_COVER_LETTER_LIMIT} used today (${coverRemaining} remaining) · resets midnight UTC`}
         </p>
       </div>
 
