@@ -271,7 +271,7 @@ describe('extractIndeedQuestions', () => {
 
   it('matches all Indeed submit and continue button variants with click-submit selector', () => {
     const SUBMIT_SELECTOR =
-      'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i], button[aria-label*="Submit" i], button[aria-label*="Continue" i], button[data-testid*="continue" i], [class*="continue" i]';
+      'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i], button[aria-label*="Submit" i], button[aria-label*="Continue" i], button[data-testid*="continue" i], [class*="continue" i], button[aria-label*="Update" i], [data-testid*="update" i], button[aria-label*="Save" i], [data-testid*="save" i]';
 
     const doc = dom(`
       <div>
@@ -280,6 +280,10 @@ describe('extractIndeedQuestions', () => {
         <button id="btn-class-continue" class="ia-continueButton">Continue</button>
         <button id="btn-type-submit" type="submit">Submit application</button>
         <button id="btn-other" type="button">Back</button>
+        <button id="btn-aria-update" type="button" aria-label="Update"><span>Update</span></button>
+        <button id="btn-testid-update" data-testid="update-button">Update</button>
+        <button id="btn-aria-save" type="button" aria-label="Save">Save</button>
+        <button id="btn-testid-save" data-testid="save-button">Save</button>
       </div>
     `);
 
@@ -297,5 +301,54 @@ describe('extractIndeedQuestions', () => {
 
     const backBtn = doc.querySelector('#btn-other')!;
     expect(backBtn.matches(SUBMIT_SELECTOR)).toBe(false);
+
+    // Update/Save variants — Indeed Edit → Update flow
+    const ariaUpdate = doc.querySelector('#btn-aria-update')!;
+    expect(ariaUpdate.matches(SUBMIT_SELECTOR)).toBe(true);
+    const spanInsideUpdate = doc.querySelector('#btn-aria-update span')!;
+    expect(spanInsideUpdate.closest(SUBMIT_SELECTOR)).toBe(doc.querySelector('#btn-aria-update'));
+
+    const testIdUpdate = doc.querySelector('#btn-testid-update')!;
+    expect(testIdUpdate.matches(SUBMIT_SELECTOR)).toBe(true);
+
+    const ariaSave = doc.querySelector('#btn-aria-save')!;
+    expect(ariaSave.matches(SUBMIT_SELECTOR)).toBe(true);
+
+    const testIdSave = doc.querySelector('#btn-testid-save')!;
+    expect(testIdSave.matches(SUBMIT_SELECTOR)).toBe(true);
+
+    // button[aria-label="Update"] → triggers capture via selector
+    const updateAriaBtn = doc.querySelector('#btn-aria-update')!;
+    expect(updateAriaBtn.matches('button[aria-label*="Update" i]')).toBe(true);
+  });
+
+  it('triggers capture via textContent fallback for Update/Save labels', () => {
+    const TEXT_FALLBACK_RE = /^(submit|continue|next|update|save|save and continue|review|done|next step)$/i;
+
+    function triggersViaText(text: string): boolean {
+      return TEXT_FALLBACK_RE.test(text.trim());
+    }
+
+    // button with text "Update" → triggers capture via textContent fallback
+    expect(triggersViaText('Update')).toBe(true);
+    expect(triggersViaText('update')).toBe(true);
+    expect(triggersViaText('  Update  ')).toBe(true);
+
+    // button with text "Save and continue" → triggers capture
+    expect(triggersViaText('Save and continue')).toBe(true);
+    expect(triggersViaText('save and continue')).toBe(true);
+
+    // other allowed labels still trigger
+    expect(triggersViaText('Save')).toBe(true);
+    expect(triggersViaText('Submit')).toBe(true);
+    expect(triggersViaText('Next step')).toBe(true);
+    expect(triggersViaText('Review')).toBe(true);
+    expect(triggersViaText('Done')).toBe(true);
+
+    // non-matching labels should not trigger
+    expect(triggersViaText('Back')).toBe(false);
+    expect(triggersViaText('Cancel')).toBe(false);
+    expect(triggersViaText('Edit')).toBe(false);
+    expect(triggersViaText('')).toBe(false);
   });
 });

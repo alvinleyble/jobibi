@@ -128,7 +128,8 @@
   2. **D-2 (Reactive Memory Refresh & Toast Hoisting)**: `MemoryBank.tsx` now listens reactively to `JOBIBI_CAPTURE_COMPLETED` runtime messages and `jobibi_last_capture` storage changes, debouncing by 250ms and calling `refresh()` immediately so captured answers appear on screen without page/panel reload. Capture toast feedback is hoisted to `App.tsx` and displayed across all active sidepanel tabs. Removed redundant `draftText` sidepanel enrichment from `JobStreetQuestions.tsx` to maintain content script as single authoritative source (D13).
   3. **D-3 (Edge Function Latency Streamlining)**: `supabase/functions/capture/index.ts` instantiates `Supabase.ai.Session('gte-small')` once at request scope instead of constructing per answer; queries max `chunk_index` once prior to the answer loop and increments locally; makes `maybeTriggerStyleProfileRebuild` fire-and-forget to eliminate response latency.
   4. **D-4 (Indeed Selector Alignment)**: Aligned `indeed.content.ts` submit/click selector to match `button[aria-label*="Continue" i]`, `button[data-testid*="continue" i]`, and `[class*="continue" i]`.
-  5. **Verification & Tests**: 267 unit tests passing (`pnpm test`), `pnpm compile` clean, extension builds clean at 1.29 MB, and all 22 Playwright E2E tests passing in ~30s (`pnpm test:e2e`).
+  5. **D-5 (Update/Save Capture Fix)**: Fixed Indeed SmartApply review → Edit → Update flow where clicking **"Update"** did not trigger capture. Extended click-submit selector in `indeed.content.ts`, `jobstreet.content.ts`, and `linkedin.content.ts` with `button[aria-label*="Update" i]`, `[data-testid*="update" i]`, `button[aria-label*="Save" i]`, `[data-testid*="save" i]` and added a `textContent` fallback matching `/^(submit|continue|next|update|save|save and continue|review|done|next step)$/i` so ATS-specific labels (Update, Save, Save and continue, etc.) trigger `scheduleCapture` via `click-text-match`.
+  6. **Verification & Tests**: 268 unit tests passing (`pnpm test` — 236 `packages/shared` + 32 `apps/extension`), `pnpm compile` clean, extension builds clean at 1.29 MB. New tests in `packages/shared/src/adapters/indeed.test.ts` cover `button[aria-label="Update"]` selector and `textContent` fallback for `Update` / `Save and continue`.
 
 ## Still open
 
@@ -141,7 +142,7 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop + S14A storage abstraction & PGlite engine + `jobibi-capture-background-immediacy` (background capture routing, reactive Memory refresh, Edge function latency streamlining, Indeed selector alignment). All 267 unit tests and 22 Playwright E2E tests passing with 0 errors.
+S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop + S14A storage abstraction & PGlite engine + `jobibi-capture-background-immediacy` (background capture routing, reactive Memory refresh, Edge function latency streamlining, Indeed selector alignment, Update/Save capture fix). All 268 unit tests passing with 0 errors.
 
 **Still to come in S14:** S14A only builds the seam. Nothing selects a posture, nothing opens a local database, and no UI mentions Local BYO-Key yet.
 
