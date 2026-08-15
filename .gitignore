@@ -34,9 +34,11 @@ pnpm-debug.log*
 
 # Personal local test files
 .jobibi-personal-files/
+.design_handoff_sidepanel_redesign/
 
 # Test outputs
 test-results/
 playwright-report/
 blob-report/
+
 
