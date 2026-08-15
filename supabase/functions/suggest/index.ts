@@ -520,7 +520,7 @@ Deno.serve(async (req) => {
 
     const payload = {
       model: 'gpt-5.6-luna',
-      max_completion_tokens: maxTokens,
+      max_completion_tokens: Math.max(800, maxTokens + 400),
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -566,15 +566,56 @@ Deno.serve(async (req) => {
       console.error('[suggest] OpenAI API error:', resp.status, text);
       return jsonResponse({ error: 'We could not generate a suggestion right now. Please try again in a moment.' }, 502);
     }
-    const data = await resp.json() as { choices: { message: { content: string } }[] };
-    const content = data.choices?.[0]?.message?.content ?? '';
-    let parsedContent: { answer: string; skeleton: string[]; sources: { kind: string; label: string; ref: string }[] };
-    try {
-      parsedContent = JSON.parse(content);
-    } catch {
-      console.error('[suggest] Model returned non-JSON:', content);
-      return jsonResponse({ error: 'Something went wrong while formatting your suggestion. Please try again.' }, 502);
+    const data = await resp.json() as {
+      choices?: {
+        message?: { content?: string | null; refusal?: string | null };
+        finish_reason?: string | null;
+      }[];
+    };
+
+    const choice = data.choices?.[0];
+    if (!choice) {
+      console.error('[suggest] No response choices returned by model');
+      return jsonResponse({ error: 'We could not generate a suggestion right now. Please try again in a moment.' }, 502);
     }
+
+    if (choice.message?.refusal) {
+      console.error('[suggest] Model refusal:', choice.message.refusal);
+      return jsonResponse({ error: 'Jobibi was unable to generate a suggestion for this question. Please check the text and try again.' }, 502);
+    }
+
+    const rawContent = choice.message?.content?.trim() ?? '';
+    if (!rawContent) {
+      console.error('[suggest] Empty content from model');
+      return jsonResponse({ error: 'We could not generate a suggestion. Please try again.' }, 502);
+    }
+
+    // Strip markdown code fences if present
+    let jsonStr = rawContent;
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    }
+
+    let parsedContent: { answer?: string; skeleton?: string[]; sources?: { kind: string; label: string; ref: string }[] };
+    try {
+      parsedContent = JSON.parse(jsonStr);
+    } catch {
+      // Fallback: extract substring between first '{' and last '}'
+      const firstBrace = jsonStr.indexOf('{');
+      const lastBrace = jsonStr.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          parsedContent = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
+        } catch {
+          console.error('[suggest] Model returned non-JSON:', rawContent);
+          return jsonResponse({ error: 'Something went wrong while formatting your suggestion. Please try again.' }, 502);
+        }
+      } else {
+        console.error('[suggest] Model returned non-JSON:', rawContent);
+        return jsonResponse({ error: 'Something went wrong while formatting your suggestion. Please try again.' }, 502);
+      }
+    }
+
     const answer = trimGracefully(parsedContent.answer ?? '', maxAnswerChars);
     const skeleton = (parsedContent.skeleton ?? []).slice(0, MAX_SKELETON_BULLETS);
     const sources = parsedContent.sources ?? [{ kind: 'memory_chunk', label: 'Your history', ref: 'memory' }];
