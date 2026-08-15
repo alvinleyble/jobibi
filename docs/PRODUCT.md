@@ -28,7 +28,7 @@ Philippine jobseekers first — JobStreet, LinkedIn, and Indeed heavy users, app
 
 2. **Copy-paste-first output, in two forms.** Every suggestion renders as a distinct *copy card*: any conversational intro/outro from the assistant is structurally separated from the answer itself, and the answer has a one-click copy button. Each card also carries the **skeleton** behind the answer — the bullet outline it was built from — so a user who would rather write the prose themselves can copy the structure instead. Both are produced by structured output from the model, never by prompt formatting tricks.
 
-3. **Progressive memory.** Day one, the memory bank holds only what the user uploads at onboarding (a resume, plus an optional pasted career-highlights/voice sample). The four repeating facts — salary expectation, notice period, work authorisation, location — are no longer front-loaded at install; each is collected the first time it's actually needed, via the same always-confirm card that handles any sensitive field (D18). Every completed application feeds submitted answers back into memory. After roughly 15–20 applications the assistant is attuned to the user's tone and best stories.
+3. **Progressive memory.** Day one, the memory bank holds only what the user uploads at onboarding (a resume, plus an optional pasted career-highlights/voice sample). Every completed application feeds submitted answers back into memory. After roughly 15–20 applications the assistant is attuned to the user's tone and best stories.
 
    Each stored answer records **how it was produced** — written by the user, edited from a draft, or accepted verbatim. Only what the user actually wrote or meaningfully edited teaches Jobibi their voice. Drafts accepted unchanged stay searchable as content but are excluded from voice learning, so the assistant never drifts toward its own writing over time.
 
@@ -40,17 +40,17 @@ Philippine jobseekers first — JobStreet, LinkedIn, and Indeed heavy users, app
 
    The model is never consulted about whether to refuse. It is only asked to word the gap question after code has already decided to ask.
 
-5. **High-stakes provenance.** Salary expectations, visa/work authorization, notice period, and relocation are *always-confirm* fields: never auto-suggested blindly, never auto-filled, at any tier. The panel shows the stored fact **with its source** — "You said ₱X on your Stripe application, April 2026 — still true?" Detection is deliberately over-inclusive: an unnecessary confirmation costs one click, a missed one puts a wrong salary figure into a real application.
+5. **High-stakes honesty.** Salary expectations and notice period are never auto-suggested: Jobibi refuses these outright and asks the user to answer directly, every time, at any tier. Nothing about either is stored or reused across applications — a wrong figure only ever comes from the user typing it themselves.
 
 6. **Premium Auto-Fill (paywalled).** Free users copy-paste. Premium users get an Insert button that types the suggestion directly into the form field. Sensitive fields are excluded regardless of tier, and Auto-Fill stands down entirely when Jobibi isn't confident it has the right field.
 
-7. **Grill Me mode.** The assistant proactively interviews the user to refresh stale facts ("Has your salary expectation changed? New tools since last year?"). Every stored fact carries a freshness clock that drives both proactive grill sessions and contextual re-confirmation mid-application.
+7. **Grill Me mode.** The assistant proactively interviews the user to refresh stale material ("New tools since last year? Any new stories worth capturing?").
 
 8. **Media branching.** When a form asks for something the assistant cannot produce (e.g., a 1–3 minute video), it recognizes the field type and offers a dedicated session to draft a script or talking points from the user's portfolio instead.
 
 ## What day one looks like
 
-A new user uploads a resume and answers four quick questions — salary expectation, notice period, work authorization, location. That takes about a minute and it is the whole of onboarding.
+A new user uploads a resume, plus an optional pasted career-highlights/voice sample. That takes about a minute and it is the whole of onboarding.
 
 Their first real application is where the memory bank actually fills. Resumes contain titles, dates, and responsibility bullets; they contain almost no stories, and behavioural questions want stories. So on that first form Jobibi will ask more than it drafts. Every answer given goes into the form the user needed to fill anyway — and stays in memory for every application after it.
 

@@ -14,7 +14,7 @@ flowchart LR
         AUTH["Auth"]
         DB["Postgres + pgvector<br/>row-level security"]
         STG["Storage<br/>resume/cover letter files"]
-        EF["Edge Functions<br/>suggest · ingest · capture · gap-answer ·<br/>sensitive-confirm · manual-input · draft-cover-letter ·<br/>style-profile · grill · export<br/>(embeddings run in-process)"]
+        EF["Edge Functions<br/>suggest · ingest · capture · gap-answer ·<br/>manual-input · draft-cover-letter ·<br/>style-profile · grill · export<br/>(embeddings run in-process)"]
     end
     LLM["OpenAI GPT-5.6 Luna<br/>key lives server-side only"]
 
@@ -54,7 +54,7 @@ What happens when the user opens an application page:
 
 5. **Retrieve** — hybrid search over `memory_chunks` for the top-k relevant pieces of history.
 
-6. **Sensitive check** — runs *before* any drafting (and — since S7A — again before every later insert of user-typed text; see *Guard against sensitive text landing in ordinary memory* below). Two independent signals, and either one firing routes the question to the always-confirm path: keyword and field-type rules, and retrieval matching the question against the user's typed `sensitive_facts` entries. Union, not intersection — an unnecessary confirmation card costs one click, a miss puts a wrong salary figure into a real application. Because the four core facts are seeded at install, the retrieval signal works from the first session. Always-confirm means no drafting and no Auto-Fill, ever, at any tier.
+6. **Salary/notice check** — runs *before* retrieval, the gate, or any Luna call. A keyword match on the normalized question for salary or notice-period returns a static refusal: no stored answer is auto-suggested, and the user answers directly in the moment, every time, at any tier.
 
 7. **The gate** — deterministic code scores two axes and picks one of three outcomes:
 
@@ -104,7 +104,6 @@ Free tier: Copy. Premium: Copy + Insert (fills the field; user still reviews and
 | `applications` | Each application the user works | company, role, site, url hash, status, submitted_at |
 | `qa_pairs` | Every question the user answered | question_norm, embedding, answer_text, application_id, **draft_text**, **origin**, **edit_distance** — **the growth loop** |
 | `gap_answers` | Answers to questions *Jobibi* asked | question_asked, answer_text, anchored_chunk_id, application_id, created_at |
-| `sensitive_facts` | High-stakes typed facts | kind (salary/notice/visa/relocation), value, source_application_id, stated_at, confirmed_at |
 | `style_profile` | Distilled voice guide | profile_md, generated_at, corpus_size |
 | `gate_decisions` | Calibration telemetry | application_id, question_norm, question_match, role_match, outcome, user_action, created_at |
 | `capture_mismatches` | D16 re-derive-drop audit log | application_id, question_label, original_mapping, rederived_mapping, reason, created_at |
@@ -126,8 +125,6 @@ So the content script keeps watching the fields it already mapped and reads thei
 
 **Guard against silent corruption.** A broken adapter that mis-binds question #3's label to question #7's textarea produces a panel that looks entirely correct while writing the wrong answer against the wrong question — corrupting memory permanently and invisibly. So the mapping is **independently re-derived at capture time** and compared against the mapping used when the suggestion was made. Agreement writes; disagreement drops the write and logs it. Extraction failures are cheap and self-announcing; mis-mapping is expensive and self-concealing, and the design pushes failure toward the cheap kind. The same confidence signal gates Auto-Fill, which degrades to read-only rather than typing into a field it isn't sure about.
 
-**Guard against sensitive text landing in ordinary memory.** The sensitive check (step 6) is not only a pre-drafting gate — it also runs immediately before every insert of user-typed text, in `gap-answer`, `capture`, and the refuse-card's manual-input path alike. A hit rejects that write outright and routes the user to the sensitive-confirm card; the value is never silently reclassified into `sensitive_facts` in the background, so it only ever enters that table through the one confirm/update screen (D17).
-
 ## Memory growth and the style profile
 
 - On submit, captured answers land in `qa_pairs` with their `origin`, and new facts/stories are chunked into `memory_chunks`.
@@ -137,7 +134,7 @@ So the content script keeps watching the fields it already mapped and reads thei
 
 ## Auto-Fill mechanics (premium)
 
-Content script sets field values with native setters + dispatched input/change events (required for React-controlled forms). Per-site adapters own the quirks; the generic fallback attempts simple text inputs only. Sensitive fields are excluded at the pipeline level (step 6), so Auto-Fill *cannot* touch them. Low-confidence mappings disable Insert entirely. The user reviews everything before submitting — Jobibi never submits.
+Content script sets field values with native setters + dispatched input/change events (required for React-controlled forms). Per-site adapters own the quirks; the generic fallback attempts simple text inputs only. Salary/notice questions are refused at the pipeline level (step 6), so Auto-Fill *cannot* touch them. Low-confidence mappings disable Insert entirely. The user reviews everything before submitting — Jobibi never submits.
 
 ## Cost model (GPT-5.6 Luna, 2026-08 prices)
 

@@ -105,6 +105,8 @@
   5. **Usage & Quotas View Sub-bar (`UsageQuotasView.tsx`)**: Expanded the "Daily cover letters" card to render dual progress sub-bars: "Saved to memory" (`coverLettersUsed / DAILY_COVER_LETTER_LIMIT`) and "Draft generations" (`coverAttemptsUsed / DAILY_COVER_LETTER_ATTEMPT_LIMIT` querying `cover_letter_attempts` created today UTC).
   6. **Verification & Testing**: Added unit tests in `documents.test.ts` for paste validation, synthetic provenance, and formatting (all 199 unit tests passing via `pnpm test`), verified TypeScript compilation (`pnpm compile`), and added Playwright E2E coverage in `e2e/settings-privacy.spec.ts` for Documents card add/delete/truncation and dual cover letter quotas (all 21 E2E tests passing in ~28s).
 
+- 2026-08-15 — **`sensitive_facts` and the always-confirm flow dropped** on branch `fm/jobibi-drop-sensitive-facts` (PR #36). Retires D17/D18's confirm/update lifecycle (S5c, S7A) in favor of a static refusal (`docs/DECISIONS.md`). Migration `20260815100001_drop_sensitive_facts.sql` drops `public.sensitive_facts` (cascading its indexes/RLS policies). `suggest/index.ts` replaces the sensitive-union check with a keyword match on the normalized question for salary/notice-period, returning `refuse` before retrieval/gate/drafting instead of the old `confirm` outcome; work authorisation/location are no longer specially handled. `SuggestCard.tsx` loses the violet Always-Confirm card; `MemoryBank.tsx` loses its sensitive-facts accordion; `App.tsx` drops `sensitive_facts` from both the export payload and the delete-everything purge. The `sensitive-confirm` Edge Function is removed (directory, `supabase/config.toml` entry, and client calls). `capture/index.ts`, `gap-answer/index.ts`, and `manual-input/index.ts` drop their per-write sensitive-storage gates. Dead code swept: `packages/shared/src/gate/sensitive.ts`, `sensitive.test.ts`, `sensitiveGoldenSet.ts`, `sensitiveFactKind.ts`, and their barrel exports; `JobStreetQuestions.tsx` drops its `droppedSensitive` capture-banner handling. `e2e/safety-gating.spec.ts` updated to expect `refuse` for salary and no longer mocks the `sensitive_facts` REST endpoint.
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -116,7 +118,7 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown. All 199 unit tests and 21 Playwright E2E tests passing with 0 errors.
+S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop (below). All 199 unit tests and 21 Playwright E2E tests passing with 0 errors as of PR #35; PR #36 removes the S5c/S7A sensitive-fields tests along with the feature.
 
 
 

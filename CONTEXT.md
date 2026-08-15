@@ -77,17 +77,9 @@ _Avoid_: Duplicate, cache hit, repeat
 
 ### High-stakes handling
 
-**Sensitive fact**:
-A typed, high-stakes piece of information — salary expectation, notice period, work authorisation, or location — that Jobibi stores with the date and application it came from.
-_Avoid_: Sensitive data, PII, critical field
-
-**Always-confirm**:
-The handling every sensitive fact receives: shown to the user with its source and asked about, never drafted from and never filled automatically, regardless of tier.
-_Avoid_: Confirmation flow, guard, gated field
-
-**Freshness**:
-How long a sensitive fact stays trustworthy before Jobibi asks whether it still holds.
-_Avoid_: TTL, staleness, expiry
+**Dynamic refusal**:
+The handling salary and notice-period questions receive: Jobibi never stores or auto-suggests a value for either, so it always refuses and asks the user to answer directly in the moment.
+_Avoid_: Sensitive fact, always-confirm, confirmation flow
 
 ### Reading the page
 
