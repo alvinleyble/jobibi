@@ -50,6 +50,16 @@ Schema is managed **only** through the Supabase CLI in this repo: `supabase init
 
 Extraction/chunking logic for uploaded documents lives in `packages/shared/src/ingestion/` and is deliberately **not** re-exported from `packages/shared/src/index.ts` — that barrel is what `apps/extension` imports, and barrel-exporting pdf/docx parsing would drag `unpdf`/`fflate` into the browser bundle for a codepath that only ever runs in the `ingest` Edge Function.
 
+## Storage: two postures behind one interface (S14A)
+
+All persistence goes through `StorageAdapter` (`packages/shared/src/storage/`) — `SupabaseStorageAdapter` for Cloud SaaS, `PGliteStorageAdapter` for Local BYO-Key. Read `storageAdapter.ts` for the contract; `storage.test.ts` runs both through the same suite and is what proves they stay interchangeable.
+
+- **`PGliteStorageAdapter` is exported from `src/storage/index.ts` but *not* from the package barrel**, for the same reason as `ingestion/`: naming it from `src/index.ts` makes Vite emit PGlite's WASM payload into the extension output (1.08 MB → 17.9 MB) even with nothing importing it. Reach it by deep path.
+- **pgvector for PGlite is the separate `@electric-sql/pglite-pgvector` package** from PGlite 0.5 — the `@electric-sql/pglite/vector` subpath only existed in 0.2.x.
+- **The 0.7/0.3 hybrid weighting has exactly one home**, `gate/retrieve.ts`. `storage/hybrid.ts` reads the weights back out of `hybridScore` and interpolates them into the PGlite SQL; the local keyword half reproduces `keywordOverlap` (distinct lowercase `\W+` tokens ÷ query token count) rather than using `ts_rank`, so the two postures cannot rank differently.
+- **The local schema is `storage/localSchema.ts`, not a migration.** It tracks `supabase/migrations/` column-for-column minus `auth.users` FKs and RLS — RLS separates different users on a shared database and has no meaning in a single-user local one.
+- **Not yet verified: PGlite under MV3.** Its bundled JS calls direct `eval`, and `apps/extension/wxt.config.ts` declares no `content_security_policy`, so extension pages get the MV3 default `script-src 'self'` — no `eval`, no `wasm-unsafe-eval`. Whatever slice first opens a local database has to settle this (CSP entry, offscreen document, or sandboxed iframe).
+
 ## Delivery
 
 Posture is `no-mistakes-prod-only`: product-facing work runs the full validation pipeline before a PR; internal tooling, scripts, and contributor process ship straight to a PR. Push through the gate with `git push no-mistakes <branch>`.
