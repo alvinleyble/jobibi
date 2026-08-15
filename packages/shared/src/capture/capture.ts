@@ -134,6 +134,7 @@ export function verifyCaptureMappings(
 // ---------------------------------------------------------------------------
 export const NEAR_DUPLICATE_KEYWORD_THRESHOLD = 0.8;
 export const NEAR_DUPLICATE_HYBRID_THRESHOLD = 0.85;
+export const MEMORY_CHUNK_DEDUP_THRESHOLD = 0.90;
 
 export interface QaPairRow {
   id: string;
@@ -214,4 +215,135 @@ export function findSeenBefore(
     return { best, score: bestScore };
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Memory-chunk dedup (jobibi-memory-qa-deduplication)
+// ---------------------------------------------------------------------------
+export interface MemoryChunkRow {
+  id: string;
+  text: string;
+  type?: string;
+  embedding?: number[] | string | null;
+}
+
+/**
+ * Extract the question part from a memory_chunks qa_pair text.
+ * Format is `Q: <label>\nA: <answer>`; fallback to raw text.
+ */
+export function extractQuestionFromChunkText(chunkText: string): string {
+  if (chunkText.startsWith('Q: ')) {
+    const idx = chunkText.indexOf('\nA:');
+    if (idx !== -1) return chunkText.slice(2, idx).trim();
+    return chunkText.slice(2).trim();
+  }
+  return chunkText;
+}
+
+/**
+ * Score how similar a question is to a stored memory chunk (qa_pair type).
+ * Uses same hybrid weighting as scoreNearDuplicate (0.7 cosine, 0.3 keyword).
+ */
+export function scoreMemoryChunkDuplicate(
+  question: string,
+  chunk: MemoryChunkRow,
+  opts?: { questionEmbedding?: number[] | null },
+): number {
+  const chunkQ = extractQuestionFromChunkText(chunk.text);
+  const kw = keywordOverlap(question, chunkQ);
+  let cos = kw;
+  if (opts?.questionEmbedding) {
+    const emb = parseEmbedding(chunk.embedding);
+    if (emb) {
+      try {
+        cos = cosine(opts.questionEmbedding, emb);
+        if (!Number.isFinite(cos)) cos = kw;
+      } catch {
+        cos = kw;
+      }
+    }
+  }
+  return hybridScore(cos, kw);
+}
+
+/**
+ * True when a question is a near-duplicate of any existing qa_pair or
+ * memory_chunk (hybrid >= threshold, default 0.90).
+ */
+export function isDuplicateQuestion(
+  question: string,
+  qaCandidates: QaPairRow[],
+  chunkCandidates: MemoryChunkRow[],
+  opts?: { questionEmbedding?: number[] | null; threshold?: number },
+): boolean {
+  const threshold = opts?.threshold ?? MEMORY_CHUNK_DEDUP_THRESHOLD;
+  for (const c of qaCandidates) {
+    if (scoreNearDuplicate(question, c, { questionEmbedding: opts?.questionEmbedding ?? null }) >= threshold) return true;
+  }
+  for (const c of chunkCandidates) {
+    if (scoreMemoryChunkDuplicate(question, c, { questionEmbedding: opts?.questionEmbedding ?? null }) >= threshold) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Grouping helpers for MemoryBank UI (jobibi-memory-qa-deduplication)
+// ---------------------------------------------------------------------------
+export interface QaGroup<T extends QaPairRow = QaPairRow> {
+  normalizedQuestion: string;
+  questionLabel: string;
+  items: T[];
+  latest: T;
+  count: number;
+}
+
+/**
+ * Group QA pairs by normalized question, folding near-duplicates whose
+ * hybrid question similarity >= MEMORY_CHUNK_DEDUP_THRESHOLD.
+ * Latest item per group is the most recent by created_at (or last in input).
+ */
+export function groupQaPairs<T extends QaPairRow & { created_at?: string }>(pairs: T[]): QaGroup<T>[] {
+  // sort descending so first per group is latest
+  const sorted = [...pairs].sort((a, b) => {
+    const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return db - da;
+  });
+  const groups: QaGroup<T>[] = [];
+  for (const p of sorted) {
+    const norm = normalizeQuestion(p.question_label);
+    // try exact normalized match first
+    let target = groups.find((g) => g.normalizedQuestion === norm);
+    // fallback: near-duplicate hybrid >= threshold (covers punctuation/case variants missed by norm, or semantic near dup via keyword)
+    if (!target) {
+      for (const g of groups) {
+        const kw = keywordOverlap(p.question_label, g.questionLabel);
+        // hybrid without embedding falls back to keyword, so check keyword directly against dedup threshold
+        if (hybridScore(kw, kw) >= MEMORY_CHUNK_DEDUP_THRESHOLD) {
+          target = g;
+          break;
+        }
+      }
+    }
+    if (target) {
+      target.items.push(p);
+      target.count = target.items.length;
+      // latest stays as first inserted (sorted desc), no need to update
+    } else {
+      groups.push({
+        normalizedQuestion: norm,
+        questionLabel: p.question_label,
+        items: [p],
+        latest: p,
+        count: 1,
+      });
+    }
+  }
+  // Re-sort groups by latest timestamp descending for stable UI order
+  groups.sort((a, b) => {
+    const da = a.latest.created_at ? new Date(a.latest.created_at).getTime() : 0;
+    const db = b.latest.created_at ? new Date(b.latest.created_at).getTime() : 0;
+    return db - da;
+  });
+  return groups;
 }

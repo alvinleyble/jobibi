@@ -8,7 +8,8 @@ import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
 import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
-import { deriveOrigin } from '../../../packages/shared/src/capture/capture.ts';
+import { deriveOrigin, scoreNearDuplicate, scoreMemoryChunkDuplicate, MEMORY_CHUNK_DEDUP_THRESHOLD } from '../../../packages/shared/src/capture/capture.ts';
+import { keywordOverlap, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -124,6 +125,22 @@ Deno.serve(async (req) => {
     const inserted: string[] = [];
     let droppedMismatched = 0;
     let memoryChunksFailed = 0;
+    let dedupSkipped = 0;
+
+    // Pre-fetch dedup candidates for vector deduplication (>=0.90 hybrid)
+    let dedupQaRows: Array<{ id: string; question_label: string; question_norm: string; embedding: unknown }> = [];
+    let dedupChunks: Array<{ id: string; text: string; embedding: unknown }> = [];
+    try {
+      const [qaRes, chunkRes] = await Promise.all([
+        supabase.from('qa_pairs').select('id, question_label, question_norm, embedding').eq('user_id', user.id).limit(500),
+        supabase.from('memory_chunks').select('id, text, embedding').eq('user_id', user.id).eq('type', 'qa_pair').limit(500),
+      ]);
+      if (!qaRes.error && qaRes.data) dedupQaRows = qaRes.data as typeof dedupQaRows;
+      if (!chunkRes.error && chunkRes.data) dedupChunks = chunkRes.data as typeof dedupChunks;
+    } catch {
+      // fail open for dedup fetch — proceed without deduplication
+    }
+    const insertedQLabelsThisBatch: string[] = [];
 
     for (const ans of answers) {
       // D16: fail closed — only a write explicitly marked verified survives.
@@ -201,10 +218,43 @@ Deno.serve(async (req) => {
         inserted.push((qaRow as { id: string }).id);
       }
 
-      // Also chunk into memory_chunks for retrieval (D12 growth loop)
+      // Also chunk into memory_chunks for retrieval (D12 growth loop) — with vector deduplication (>=0.90 hybrid)
       const insertedId = inserted[inserted.length - 1];
+      // Keep dedup candidate list in sync: add this question to qa cache so later answers in same batch dedup against it
+      dedupQaRows.push({ id: insertedId, question_label: qLabel, question_norm: qNorm, embedding: embedding ? JSON.stringify(embedding) : null });
       // Only chunk if answer is substantive (>10 chars)
       if (trimmedAnswer.length >= 10) {
+        // Check near-duplicate before inserting memory_chunks
+        let isDuplicate = false;
+        try {
+          // try to embed question for hybrid cosine comparison (fail open to keyword-only)
+          let qEmb: number[] | null = null;
+          try {
+            qEmb = await new Supabase.ai.Session('gte-small').run(qLabel.slice(0, 2000), { mean_pool: true, normalize: true });
+          } catch { qEmb = null; }
+          for (const c of dedupQaRows.slice(0, -1)) {
+            // exclude the just-pushed current row itself; check against prior rows only
+            const s = scoreNearDuplicate(qLabel, { id: c.id, question_label: c.question_label, question_norm: c.question_norm, answer_text: '' , embedding: c.embedding as string | null } as never, { questionEmbedding: qEmb });
+            if (s >= MEMORY_CHUNK_DEDUP_THRESHOLD) { isDuplicate = true; break; }
+          }
+          if (!isDuplicate) {
+            for (const ch of dedupChunks) {
+              const s = scoreMemoryChunkDuplicate(qLabel, { id: ch.id, text: ch.text, embedding: ch.embedding as string | null }, { questionEmbedding: qEmb });
+              if (s >= MEMORY_CHUNK_DEDUP_THRESHOLD) { isDuplicate = true; break; }
+            }
+          }
+          if (!isDuplicate && insertedQLabelsThisBatch.length) {
+            for (const prevQ of insertedQLabelsThisBatch) {
+              const kw = keywordOverlap(qLabel, prevQ);
+              if (hybridScore(kw, kw) >= MEMORY_CHUNK_DEDUP_THRESHOLD) { isDuplicate = true; break; }
+            }
+          }
+        } catch {
+          // on scoring error, do not deduplicate
+        }
+        if (isDuplicate) {
+          dedupSkipped++;
+        } else {
         try {
           let memEmb: number[] | null = null;
           try {
@@ -235,11 +285,16 @@ Deno.serve(async (req) => {
             if (!recovered) memoryChunksFailed++;
           } else {
             void memRow;
+            // track successful memory chunk for intra-batch dedup
+            const newChunkId = (memRow as { id: string }).id;
+            dedupChunks.push({ id: newChunkId, text: `Q: ${qLabel}\nA: ${trimmedAnswer}`, embedding: memEmb ? JSON.stringify(memEmb) : null });
+            insertedQLabelsThisBatch.push(qLabel);
           }
           void insertedId;
         } catch (e) {
           memoryChunksFailed++;
           console.error('[capture] memory_chunks insert failed', e);
+        }
         }
       }
     }
@@ -257,6 +312,7 @@ Deno.serve(async (req) => {
       droppedMismatched,
       droppedSensitive: 0,
       memoryChunksFailed,
+      dedupSkipped,
       sensitiveRejections: [],
       mismatchesLogged: mismatches?.length ?? 0,
     }, 200);
