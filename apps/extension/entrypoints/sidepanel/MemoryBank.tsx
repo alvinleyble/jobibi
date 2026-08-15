@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { type DocumentKind } from '@jobibi/shared';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type DocumentKind, groupQaPairs, normalizeQuestion } from '@jobibi/shared';
+import type { QaPairRow } from '@jobibi/shared';
 import { supabase } from './supabase';
 import { humanizeErrorMessage } from './ingestError';
 import DraftCoverLetter from './DraftCoverLetter';
@@ -97,20 +98,66 @@ export function MemoryBank({ userId }: MemoryBankProps) {
   const deleteQaPair = async (qa: QaRow) => {
     setDeletingQaId(qa.id);
     try {
-      // 1. Delete matching memory_chunks embedding (D12: purged permanently from vector retrieval)
       await supabase
         .from('memory_chunks')
         .delete()
         .eq('user_id', userId)
         .eq('type', 'qa_pair')
         .eq('text', `Q: ${qa.question_label}\nA: ${qa.answer_text}`);
-
-      // 2. Delete qa_pairs row
       await supabase.from('qa_pairs').delete().eq('id', qa.id).eq('user_id', userId);
-
       await refresh();
     } catch (e) {
       console.error('Failed to delete QA pair:', e);
+    } finally {
+      setDeletingQaId(null);
+    }
+  };
+
+  const deleteQaGroup = async (group: { questionLabel: string; items: QaRow[]; normalizedQuestion: string }) => {
+    const groupId = group.items[0]?.id ?? group.normalizedQuestion;
+    setDeletingQaId(groupId);
+    try {
+      // Delete all qa_pairs rows in the group
+      const ids = group.items.map((i) => i.id);
+      if (ids.length) {
+        await supabase.from('qa_pairs').delete().in('id', ids).eq('user_id', userId);
+      }
+      // Purge associated memory_chunks entries (D12)
+      // Fetch candidate chunks and filter by normalized question
+      const { data: chunkRows } = await supabase
+        .from('memory_chunks')
+        .select('id, text')
+        .eq('user_id', userId)
+        .eq('type', 'qa_pair');
+      const toDelete: string[] = [];
+      if (chunkRows) {
+        for (const ch of chunkRows as Array<{ id: string; text: string }>) {
+          const qPart = ch.text.startsWith('Q: ') ? (ch.text.split('\nA:')[0]?.slice(2).trim() ?? ch.text) : ch.text;
+          if (normalizeQuestion(qPart) === group.normalizedQuestion) toDelete.push(ch.id);
+        }
+        // fallback: if no normalized match but text contains exact label, also match
+        if (toDelete.length === 0) {
+          for (const ch of chunkRows as Array<{ id: string; text: string }>) {
+            if (ch.text === `Q: ${group.items[0]?.question_label}\nA: ${group.items[0]?.answer_text}`) toDelete.push(ch.id);
+          }
+        }
+      }
+      // Also attempt direct text-equality deletes per item as fallback (covers case where fetch fails)
+      if (toDelete.length) {
+        await supabase.from('memory_chunks').delete().in('id', toDelete);
+      } else {
+        for (const qa of group.items) {
+          await supabase
+            .from('memory_chunks')
+            .delete()
+            .eq('user_id', userId)
+            .eq('type', 'qa_pair')
+            .eq('text', `Q: ${qa.question_label}\nA: ${qa.answer_text}`);
+        }
+      }
+      await refresh();
+    } catch (e) {
+      console.error('Failed to delete QA group:', e);
     } finally {
       setDeletingQaId(null);
     }
@@ -121,12 +168,28 @@ export function MemoryBank({ userId }: MemoryBankProps) {
     return acc;
   }, {});
 
+  // Group QA pairs for deduped UI (identical or near-identical questions)
+  const groupedQa = useMemo(() => {
+    if (!qaPairs.length) return [];
+    // Adapt QaRow to QaPairRow shape expected by groupQaPairs
+    const adapted: Array<QaPairRow & { created_at: string; origin: string; answer_text: string; question_label: string }> = qaPairs.map((qa) => ({
+      id: qa.id,
+      question_label: qa.question_label,
+      question_norm: normalizeQuestion(qa.question_label),
+      answer_text: qa.answer_text,
+      origin: qa.origin as never,
+      created_at: qa.created_at,
+      embedding: null,
+    }));
+    return groupQaPairs(adapted);
+  }, [qaPairs]);
+
   return (
     <div data-screen-label="Memory" className="flex flex-col gap-3">
       {/* 1. Draft Cover Letter Card */}
       <DraftCoverLetter onStored={refresh} />
 
-      {/* 2. Stored Answers Card */}
+      {/* 2. Stored Answers Card — grouped by normalized question */}
       <div className="flex flex-col gap-2.5 rounded-[10px] border border-card-border bg-card p-3.5">
         <h3 className="text-[13.5px] font-bold text-ink">
           Stored answers · {qaPairs.length}
@@ -138,34 +201,54 @@ export function MemoryBank({ userId }: MemoryBankProps) {
           <p className="text-xs italic text-ink-muted">No stored Q&amp;A answers yet.</p>
         ) : (
           <div className="flex flex-col gap-2">
-            {qaPairs.map((qa) => (
+            {groupedQa.map((group) => {
+              const qa = group.latest as unknown as QaRow;
+              const isDeleting = group.items.some((it) => deletingQaId === it.id) || deletingQaId === group.items[0]?.id;
+              return (
               <div
-                key={qa.id}
-                data-testid={`qa-item-${qa.id}`}
+                key={group.normalizedQuestion}
+                data-testid={`qa-group-${group.normalizedQuestion}`}
+                data-group-count={group.count}
                 className="flex flex-col rounded-lg border border-card-border bg-subtle p-2.5 text-xs text-left"
               >
-                <p className="font-bold text-ink break-words text-[12.5px]">Q: {qa.question_label}</p>
+                <p className="font-bold text-ink break-words text-[12.5px]">Q: {group.questionLabel}</p>
                 <p className="mt-1 text-ink-secondary whitespace-pre-wrap break-words leading-[1.45] text-[12.5px]">
                   A: {qa.answer_text}
                 </p>
-                <div className="mt-1.5 flex items-center justify-between">
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <span className="text-[11px] text-ink-muted">
                     Captured · {new Date(qa.created_at).toLocaleDateString()}
                   </span>
+                  <span className="rounded-full bg-card border border-card-border px-2 py-0.5 text-[10.5px] font-semibold text-ink-muted">
+                    {qa.origin}
+                  </span>
+                  {group.count > 1 ? (
+                    <span data-testid={`qa-group-badge-${group.normalizedQuestion}`} className="rounded-full bg-accent/10 border border-accent/20 px-2 py-0.5 text-[10.5px] font-semibold text-accent">
+                      Used in {group.count} applications
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-1.5 flex items-center justify-end">
+                  {/* Preserve per-item test id for backwards compatibility: expose on grouped card */}
+                  <span data-testid={`qa-item-${qa.id}`} className="hidden" />
                   <button
                     type="button"
-                    onClick={() => deleteQaPair(qa)}
-                    disabled={deletingQaId === qa.id}
-                    aria-label={`Delete answer for ${qa.question_label}`}
+                    onClick={() => {
+                      if (group.count > 1) void deleteQaGroup(group as unknown as { questionLabel: string; items: QaRow[]; normalizedQuestion: string });
+                      else void deleteQaPair(qa);
+                    }}
+                    disabled={isDeleting}
+                    aria-label={`Delete answer for ${group.questionLabel}`}
                     title="Delete answer"
                     data-testid={`delete-qa-btn-${qa.id}`}
                     className="border-none bg-transparent text-[12px] font-bold text-delete-text hover:underline cursor-pointer disabled:opacity-50"
                   >
-                    {deletingQaId === qa.id ? 'Deleting…' : 'Delete'}
+                    {isDeleting ? 'Deleting…' : 'Delete'}
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

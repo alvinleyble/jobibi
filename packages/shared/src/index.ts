@@ -39,8 +39,16 @@ export {
   verifyCaptureMappings,
   findSeenBefore,
   scoreNearDuplicate,
+  scoreMemoryChunkDuplicate,
+  extractQuestionFromChunkText,
+  isDuplicateQuestion,
+  groupQaPairs,
+  MEMORY_CHUNK_DEDUP_THRESHOLD,
+  NEAR_DUPLICATE_HYBRID_THRESHOLD,
+  NEAR_DUPLICATE_KEYWORD_THRESHOLD,
 } from './capture/capture.ts';
-export type { QaOrigin, OriginResult, MappingVerifyResult } from './capture/capture.ts';
+export type { QaOrigin, OriginResult, MappingVerifyResult, QaPairRow, MemoryChunkRow, QaGroup } from './capture/capture.ts';
+export { normalizeQuestion } from './gate/normalize.ts';
 
 // Style profile (S9) — lightweight, safe for extension bundle (no ingestion deps)
 export {
