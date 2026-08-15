@@ -4,29 +4,62 @@
 
 ## Shape of the system
 
-```mermaid
-flowchart LR
-    subgraph Browser["Chrome (user's browser)"]
-        CS["Content scripts<br/>adapters: read questions,<br/>watch fields, premium: fill"]
-        SP["Side panel UI<br/>copy cards, confirmations,<br/>gap questions, Grill Me"]
-    end
-    subgraph Supabase["Supabase (Singapore region)"]
-        AUTH["Auth"]
-        DB["Postgres + pgvector<br/>row-level security"]
-        STG["Storage<br/>resume/cover letter files"]
-        EF["Edge Functions<br/>suggest · ingest · capture · gap-answer ·<br/>manual-input · draft-cover-letter ·<br/>style-profile · grill · export<br/>(embeddings run in-process)"]
-    end
-    LLM["OpenAI GPT-5.6 Luna<br/>key lives server-side only"]
+Jobibi operates across two distinct user postures (D21) through a unified client architecture with decoupled **`StorageAdapter`** and **`AIAdapter`** abstractions:
 
-    CS <--> SP
-    SP --> EF
-    EF --> DB
-    EF --> STG
-    EF --> LLM
-    SP --> AUTH
+```mermaid
+flowchart TD
+    subgraph Browser["Chrome Extension (Client Side)"]
+        UI["Side Panel & Content Scripts<br/>SuggestCards · MemoryBank · AutoFill"]
+        SA["StorageAdapter<br/>(Interface)"]
+        AI["AIAdapter<br/>(Interface)"]
+        
+        PGL["PGliteStorageAdapter<br/>In-Process Postgres WASM<br/>IndexedDB / OPFS (Local)"]
+        SUPA_S["SupabaseStorageAdapter<br/>Remote Cloud Client"]
+        
+        BYO["ClientAIAdapter<br/>Direct HTTPS: OpenAI / Gemini / Claude"]
+        PRX["JobibiProxyAIAdapter<br/>Calls Hosted Edge Function"]
+    end
+    
+    subgraph Cloud["Supabase Cloud & Hosted Proxy (Cloud Posture Only)"]
+        AUTH["Supabase Auth (OTP/PKCE)"]
+        DB["Cloud Postgres + pgvector"]
+        EF["Edge Functions (Hosted Proxy)"]
+    end
+    
+    subgraph Providers["External AI Providers"]
+        OAI["OpenAI API"]
+        GEM["Google Gemini API"]
+        ANT["Anthropic Claude API"]
+    end
+
+    UI --> SA
+    UI --> AI
+    
+    SA -.->|Local Posture| PGL
+    SA -.->|Cloud Posture| SUPA_S
+    
+    AI -.->|Local Posture (BYO-Key)| BYO
+    AI -.->|Cloud Posture| PRX
+    
+    SUPA_S --> DB
+    PRX --> EF --> OAI
+    
+    BYO --> OAI
+    BYO --> GEM
+    BYO --> ANT
 ```
 
-The extension never talks to the AI directly — every AI call goes through an Edge Function, so API keys never ship in the extension and every request is authenticated and rate-limitable per user.
+- **Local BYO-Key Posture (Posture A):** Memory bank, resumes, and vector embeddings live 100% on-device inside PGlite WASM. The extension makes direct HTTPS calls to the user's chosen model provider (OpenAI, Gemini, Claude) with zero intermediary storage.
+- **Cloud SaaS Posture (Posture B):** Turnkey operation where memory syncs across devices via Supabase Postgres, and AI calls are routed through Jobibi's hosted Edge proxy.
+
+### Local-First Runtime Guardrails (D22)
+
+1. **Centralized PGlite Host in Background Context:** PGlite WASM is instantiated exclusively in the background worker/offscreen context. Side panel and content scripts communicate via extension message passing (`browser.runtime.sendMessage`), eliminating IndexedDB multi-context lock contention.
+2. **Storage Eviction Defense:** Calls `navigator.storage.persist()` on local initialization to prevent Chromium from evicting local memory during low-disk states.
+3. **On-Demand Embedding Ingestion:** Quantized `gte-small` ONNX model (~30MB) is downloaded on-demand and cached in browser CacheStorage/IndexedDB upon first selecting Local Mode.
+4. **Transparent Token Usage:** Automatic style profile distillation (D19) surfaces a non-blocking indicator in the Memory Tab when consuming user API tokens.
+5. **Strict Telemetry Air-Gap:** All `gate_decisions`, `extraction_failures`, and `capture_mismatches` are stored in local PGlite tables only; outbound telemetry to Supabase is hard-disabled in Local Mode.
+6. **Isolated Posture Silos:** Cloud and Local are distinct databases; switching posture offers an optional 1-click cloud memory copy to local.
 
 ## Why this stack
 

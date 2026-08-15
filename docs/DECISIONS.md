@@ -12,11 +12,12 @@ D1–D4 were accepted before the design grill. D5 was split by it. D10–D17 are
 **Why:** The only platform that can both read application forms reliably (direct DOM access) and write into them (premium Auto-Fill). Edge compatibility comes free.
 **Rejected:** Screen-aware desktop app — needs OCR, cannot fill fields (kills the premium feature), worse privacy optics, much more work.
 
-## D2 — Memory bank lives in the cloud — **accepted** (2026-08-09)
+## D2 — Memory bank lives in the cloud — **superseded by D20** (2026-08-15)
 
 **Decision:** Memory is stored in Supabase Postgres with per-user row-level security, plus export and delete-my-data endpoints.
 **Why:** Syncs across devices, simplest to build well, and the isolation claim is enforced by the database itself.
 **Rejected:** Local-only browser storage — strongest privacy claim but no sync, fragile (cleared browser data = lost memory), significantly more work. A local-only mode remains a possible future premium differentiator.
+**Superseded (2026-08-15):** D20 accepts local-first (PGlite) as the production default. See D20 for the full rationale and rejected alternatives.
 
 ## D3 — Payments deferred — **accepted** (2026-08-09)
 
@@ -185,3 +186,55 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 - Training on `accepted_verbatim` to "grow the corpus faster" — reintroduces the D13 drift the product exists to avoid, invisible and compounding.
 
 **Out of scope, folded into this record's rationale:** the "10 answers" delta, "100-item cap," and "no UI" choices are parameters of this same distillation design, not separate decisions warranting their own records. Freshness clocks, proactive grilling, intake-flow changes, and style-profile viewing/editing UI remain explicitly out of scope.
+
+## D20 — Local-first architecture (supersedes D2) — **accepted** (2026-08-15)
+
+**Decision:** Memory storage moves from Supabase Postgres to PGlite (in-process Postgres WASM, running inside the extension's service worker). This is the new production default for all new users. Cloud mode is removed / becomes legacy-only. The Supabase project is reduced to Auth-only (email OTP, no application-data tables). AI calls (suggest, gap-answer, draft-cover-letter, etc.) continue to flow through a Jobibi-managed proxy endpoint that holds the OpenAI key — the extension itself still ships zero secrets.
+
+**Why:**
+- *Privacy-first motivation:* the most common objection to Jobibi is that résumé and answer history leave the device. A local-only memory bank eliminates that objection entirely. Embeddings already run in-process (D5c); moving the DB completes the on-device story.
+- *PGlite over SQLite or native sidecar:* PGlite is in-process Postgres WASM, meaning the existing schema, migrations, RLS logic, and pgvector queries carry over with minimal rewriting. SQLite would require rewriting every Postgres-dialect query and reimplementing vector search. A native companion app adds a mandatory install step that kills adoption. The ~10MB one-time WASM download is acceptable for an extension.
+- *Supabase Auth retained:* quota enforcement and billing require knowing who the user is. Supabase Auth (email OTP, PKCE) already works; stripping only the DB tables gives us account identity with zero new infrastructure.
+- *Jobibi-managed AI proxy:* the extension must never bundle a secret. A lightweight proxy (e.g. Cloudflare Worker) forwards the OpenAI call and streams the response — it persists nothing. The user's memory data is assembled locally and included in the prompt transiently; it is not stored by us. This is the correct privacy claim: *your history never leaves your device persistently*.
+- *No sync:* purely local. Two-separate-worlds is the right first design — conflict resolution for a privacy-first product adds complexity and cloud surface that contradicts the motivation.
+
+**Rejected:**
+- *Keeping Supabase DB + adding local toggle:* two storage backends in parallel are expensive to maintain and create subtle divergence bugs. Committing to local-first is cleaner.
+- *SQLite via OPFS:* significant query rewrite cost, vector search reimplementation, no benefit over PGlite for this schema.
+- *Native companion app:* breaks "just install the extension" UX; too high a setup barrier.
+- *User-supplied OpenAI key in chrome.storage.local:* adds friction at setup, exposes key management complexity to the user, and shifts blame for API errors. Proxy keeps UX identical to today.
+- *Fully offline (no AI):* removes the core value proposition. The privacy promise is about *stored data*, not about *ephemeral API calls*.
+- *Bi-directional cloud sync:* conflict resolution complexity, contradicts the privacy motivation, deferred indefinitely.
+
+**Revisit trigger:** If PGlite's WASM bundle size or service-worker memory limits prove prohibitive on low-end devices in beta testing, reconsider SQLite WASM (OPFS) with a pgvector-compatible vector search shim.
+
+**Scope of this slice:** PGlite integration + storage abstraction layer. Auth model, AI call path, and business model are refined in D21.
+
+## D21 — Two-posture architecture + BYO-Key model — **accepted** (2026-08-15)
+
+**Decision:** Jobibi ships as a single extension with two selectable operating postures chosen at first launch via a clear mode picker: **Local BYO-Key** (default/focus) and **Cloud SaaS** (turnkey with sync). Local LLM (Ollama/LM Studio) is dropped from scope to avoid onboarding complexity and model degradation.
+
+| Posture | Storage | AI Calls | Auth | Privacy Rating | Monetisation |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Local BYO-Key** | PGlite (on-device) | Direct to OpenAI, Gemini, or Claude | None | *High Privacy (Local Memory)* | Free & Open Source |
+| **Cloud SaaS** | Supabase Postgres | Jobibi Proxy (`gpt-5.6-luna`) | Supabase Auth | *Standard SaaS Privacy* | Monthly Pro Subscription |
+
+**Why Local LLM (Mode 3) was dropped:**
+- *High onboarding barrier:* Requiring non-technical job applicants to install Ollama/LM Studio, download multi-gigabyte models, and manage local GPU memory creates immense UX friction.
+- *Draft quality & schema reliability:* 3B–7B parameter local models often struggle with complex JSON schema adherence and structured draft formatting compared to modern cloud APIs.
+- *Local BYO-Key achieves 95% of privacy goals:* User memory, resumes, and vector embeddings remain 100% on-device; only the ephemeral drafting prompt leaves the machine directly to their provider of choice with zero intermediary storage.
+
+**Supported BYO-Key Providers:** OpenAI, Google Gemini, Anthropic Claude (all support structured JSON outputs).
+
+**Build order:** (1) Storage abstraction + PGlite, (2) Client AI abstraction + Provider adapters, (3) Posture picker UI & settings, (4) Cloud subscription billing (later).
+
+## D22 — Local-First Runtime Guardrails, Concurrency & Data Isolation — **accepted** (2026-08-15)
+
+**Decision:** The implementation of Local BYO-Key Mode is bound by five strict runtime, privacy, and architectural guardrails:
+
+1. **Centralized PGlite Host (Zero Lock Contention):** A single PGlite database instance is hosted strictly in the Extension Background Service Worker / Offscreen context. The Side Panel UI and Content Scripts never open PGlite directly; all database reads, writes, and vector hybrid searches are mediated via extension message passing (`browser.runtime.sendMessage`).
+2. **On-Demand Embedding Model Delivery:** The `gte-small` ONNX vector embedding model (~30MB) is downloaded on-demand from HuggingFace CDN when the user first selects Local Mode, displaying clear progress in the UI, and cached permanently in browser CacheStorage/IndexedDB. Extension install bundle remains lightweight (~1MB).
+3. **Storage Persistence Guarantee:** Upon initializing Local Mode, the extension explicitly requests `navigator.storage.persist()` to prevent Chromium from automatically evicting IndexedDB during low-disk cleanup.
+4. **Transparent Background Distillation:** Style profile rebuilding (D19) runs automatically after every 10 qualifying user answers, with a subtle UI indicator in the Memory Tab ("✨ Updating your writing style profile...") so users are aware of background token usage on their personal API key.
+5. **Zero-Outbound Telemetry Boundary:** In Local Mode, all `gate_decisions`, `extraction_failures`, and `capture_mismatches` are stored strictly in local PGlite tables. All outbound network requests to Supabase or remote analytics are hard-disabled at the client transport layer.
+6. **Isolated Silos with 1-Click Cloud Import:** Cloud and Local storage remain distinct isolated databases. Users switching from Cloud to Local in Settings are offered an optional one-time "Import Cloud Memory to Local" copy step to avoid starting from scratch without establishing continuous sync.
