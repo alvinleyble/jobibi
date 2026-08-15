@@ -42,7 +42,7 @@ Philippine jobseekers first — JobStreet, LinkedIn, and Indeed heavy users, app
 
 5. **High-stakes honesty.** Salary expectations and notice period are never auto-suggested: Jobibi refuses these outright and asks the user to answer directly, every time, at any tier. Nothing about either is stored or reused across applications — a wrong figure only ever comes from the user typing it themselves.
 
-6. **Premium Auto-Fill (paywalled).** Free users copy-paste. Premium users get an Insert button that types the suggestion directly into the form field. Sensitive fields are excluded regardless of tier, and Auto-Fill stands down entirely when Jobibi isn't confident it has the right field.
+6. **Premium Auto-Fill (paywalled).** Free users copy-paste. Premium users get an Insert button that types the suggestion directly into the form field. Salary/notice questions are never drafted so there is nothing to insert, and Auto-Fill stands down entirely when Jobibi isn't confident it has the right field.
 
 7. **Grill Me mode.** The assistant proactively interviews the user to refresh stale material ("New tools since last year? Any new stories worth capturing?").
 

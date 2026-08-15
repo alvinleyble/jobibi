@@ -2,7 +2,8 @@
  * S11: Auto-Fill behind the beta flag
  *
  * Provides shared DOM fill logic, field type validation, D16 confidence gating,
- * and D17 sensitive field exclusion.
+ * and sensitive/refused field exclusion (salary/notice are a static refusal;
+ * the isSensitive flag is a defensive legacy guard, not a primary path).
  */
 
 export const AUTOFILL_CONFIDENCE_THRESHOLD = 0.75;
@@ -87,7 +88,7 @@ export function fillElementValue(el: HTMLInputElement | HTMLTextAreaElement, tex
   if (typeof el.focus === 'function') {
     try {
       el.focus();
-    } catch {}
+    } catch { /* focus may throw in test/jsdom environments */ }
   }
 
   const win = el.ownerDocument?.defaultView ?? globalThis;
@@ -110,8 +111,8 @@ export function fillElementValue(el: HTMLInputElement | HTMLTextAreaElement, tex
 }
 
 /**
- * High-level autofill handler with D16 confidence gating, D17 sensitive exclusions,
- * and element type validation.
+ * High-level autofill handler with D16 confidence gating, sensitive/refused
+ * exclusions, and element type validation.
  */
 export function executeAutofill(options: {
   el: Element | null;

@@ -51,7 +51,7 @@ function getSearchRoots(root: ParentNode): ParentNode[] {
       const host = doc.getElementById?.(id) as unknown as { shadowRoot?: ParentNode } | null;
       const sr = host?.shadowRoot;
       if (sr && !roots.includes(sr)) roots.push(sr);
-    } catch {}
+    } catch { /* host lookup may fail in test environments */ }
   }
   // Generic one-level scan: any element with an open shadowRoot
   try {
@@ -60,7 +60,7 @@ function getSearchRoots(root: ParentNode): ParentNode[] {
       const sr = (el as unknown as { shadowRoot?: ParentNode }).shadowRoot;
       if (sr && !roots.includes(sr)) roots.push(sr);
     }
-  } catch {}
+  } catch { /* querySelectorAll may fail outside DOM environments */ }
   return roots;
 }
 

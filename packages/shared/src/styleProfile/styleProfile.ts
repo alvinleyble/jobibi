@@ -72,7 +72,7 @@ export function buildDistillationUserContent(items: VoiceCorpusItem[]): string {
 }
 
 export function sanitizeProfileMd(raw: string): string {
-  let md = (raw ?? '').trim().slice(0, STYLE_PROFILE_MAX_PROFILE_CHARS);
+  const md = (raw ?? '').trim().slice(0, STYLE_PROFILE_MAX_PROFILE_CHARS);
   // Normalize bullet prefix
   const lines = md
     .split('\n')

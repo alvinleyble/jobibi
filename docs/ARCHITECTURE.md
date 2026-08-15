@@ -130,7 +130,7 @@ So the content script keeps watching the fields it already mapped and reads thei
 - On submit, captured answers land in `qa_pairs` with their `origin`, and new facts/stories are chunked into `memory_chunks`.
 - A background job re-distills the **style profile** once the qualifying voice-corpus delta since the last rebuild reaches 10 (D19). This is the concrete mechanism behind "attuned after 15–20 applications". Distillation runs as a direct chat completion today; the half-price batch tier is deferred until a poller can reconcile its async result (D19).
 - **The voice corpus is filtered by origin.** It is the union of `qa_pairs` and `documents` rows with `origin in (user_written, user_edited)` plus all `gap_answers` rows (D19). `accepted_verbatim` drafts remain fully searchable as *content* but are excluded from *voice* learning. Without this filter, by application 15 most of `qa_pairs` would be Jobibi's own prose, and the style profile would be distilling model tone rather than the user's — drifting further from them with every cycle while claiming to do the opposite.
-- Every fact type has a freshness half-life (salary ~90 days, notice period ~90, tools/skills ~180, relocation ~180). Stale facts power **Grill Me** sessions and contextual re-confirms.
+- Every fact type has a freshness half-life (tools/skills ~180 days). Stale facts power **Grill Me** sessions.
 
 ## Auto-Fill mechanics (premium)
 

@@ -177,7 +177,7 @@ describe('autofill helpers', () => {
   });
 
   describe('executeAutofill', () => {
-    it('rejects sensitive fields (D17 structural exclusion)', () => {
+    it('rejects sensitive/refused fields (salary/notice legacy isSensitive guard)', () => {
       const doc = dom('<textarea id="t1"></textarea>');
       const el = doc.getElementById('t1')!;
       const res = executeAutofill({
