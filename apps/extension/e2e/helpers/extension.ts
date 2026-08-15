@@ -186,6 +186,9 @@ export async function seedSession(
   await sidepanelPage.route('**/rest/v1/style_profile*', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });
+  await sidepanelPage.route('**/rest/v1/cover_letter_attempts*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
   await sidepanelPage.route('**/rest/v1/applications*', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });

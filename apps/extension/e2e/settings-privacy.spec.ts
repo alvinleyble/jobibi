@@ -135,9 +135,11 @@ test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
     await expect(sidepanel.locator('[data-testid="daily-quota-status"]')).toBeVisible();
     await expect(sidepanel.locator('text=⚡ 5 of 15 used today (10 remaining)')).toBeVisible();
 
-    // Check Cover Letter quota indicator
+    // Check Cover Letter quota indicators (Saved to memory & Draft generations)
     await expect(sidepanel.locator('[data-testid="daily-cover-quota-status"]')).toBeVisible();
     await expect(sidepanel.locator('text=📄 0 of 1 used today (1 remaining)')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="daily-cover-attempts-quota-status"]')).toBeVisible();
+    await expect(sidepanel.locator('text=⚡ 0 of 5 used today (5 remaining) · resets midnight UTC')).toBeVisible();
   });
 
   test('Privacy Surface: Delete Everything opens confirmation modal requiring "DELETE"', async () => {
