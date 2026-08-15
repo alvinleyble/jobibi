@@ -65,7 +65,7 @@ test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
 
     // 4. Switch to Memory tab
     await sidepanel.locator('[data-testid="tab-memory-btn"]').click();
-    await expect(sidepanel.locator('text=Upload a document')).toBeVisible();
+    await expect(sidepanel.locator('text=Documents ·')).toBeVisible();
     await expect(sidepanel.locator('text=Draft a cover letter')).toBeVisible();
 
     // 5. Switch to Suggest tab
@@ -135,9 +135,11 @@ test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
     await expect(sidepanel.locator('[data-testid="daily-quota-status"]')).toBeVisible();
     await expect(sidepanel.locator('text=⚡ 5 of 15 used today (10 remaining)')).toBeVisible();
 
-    // Check Cover Letter quota indicator
+    // Check Cover Letter quota indicators (Saved to memory & Draft generations)
     await expect(sidepanel.locator('[data-testid="daily-cover-quota-status"]')).toBeVisible();
     await expect(sidepanel.locator('text=📄 0 of 1 used today (1 remaining)')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="daily-cover-attempts-quota-status"]')).toBeVisible();
+    await expect(sidepanel.locator('text=⚡ 0 of 5 used today (5 remaining) · resets midnight UTC')).toBeVisible();
   });
 
   test('Privacy Surface: Delete Everything opens confirmation modal requiring "DELETE"', async () => {
@@ -216,6 +218,122 @@ test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
     // Verify answer is purged
     await expect(sidepanel.locator('text=Stored answers · 0')).toBeVisible({ timeout: 5000 });
     await expect(sidepanel.locator('text=No stored Q&A answers yet.')).toBeVisible();
+  });
+
+  test('Memory Bank: consolidated Documents card supports add flow and per-document deletion', async () => {
+    const sidepanel = await openSidepanel(ext.context, ext.extensionId);
+    await seedSession(sidepanel, { isBetaTester: true });
+
+    let docDeleted = false;
+    await sidepanel.route('**/rest/v1/documents*', async (route) => {
+      if (route.request().method() === 'DELETE') {
+        docDeleted = true;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        return;
+      }
+      if (docDeleted) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            {
+              id: 'doc-2',
+              kind: 'cover_letter',
+              file_name: 'pasted-cover_letter-2026-08-15',
+              created_at: '2026-08-14T01:00:00Z',
+              storage_path: null,
+            },
+          ]),
+        });
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            {
+              id: 'doc-1',
+              kind: 'resume',
+              file_name: 'john_doe_resume_2026.pdf',
+              created_at: '2026-08-14T00:00:00Z',
+              storage_path: 'test-user-e2e-id/resume.pdf',
+            },
+            {
+              id: 'doc-2',
+              kind: 'cover_letter',
+              file_name: 'pasted-cover_letter-2026-08-15',
+              created_at: '2026-08-14T01:00:00Z',
+              storage_path: null,
+            },
+          ]),
+        });
+      }
+    });
+
+    await sidepanel.route('**/rest/v1/memory_chunks*', async (route) => {
+      if (route.request().method() === 'DELETE') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'c-1', document_id: 'doc-1' },
+          { id: 'c-2', document_id: 'doc-1' },
+          { id: 'c-3', document_id: 'doc-2' },
+        ]),
+      });
+    });
+
+    await sidepanel.route('**/storage/v1/object/**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+
+    await sidepanel.reload();
+    await sidepanel.waitForLoadState('domcontentloaded');
+
+    // Go to Memory tab
+    await sidepanel.locator('[data-testid="tab-memory-btn"]').click();
+
+    // Verify Documents accordion is present with count 2
+    await expect(sidepanel.locator('text=Documents · 2')).toBeVisible({ timeout: 5000 });
+
+    // Open Documents accordion
+    await sidepanel.locator('[data-testid="toggle-documents-btn"]').click();
+
+    // Verify document items and single-line layout
+    const doc1Item = sidepanel.locator('[data-testid="doc-item-doc-1"]');
+    const doc2Item = sidepanel.locator('[data-testid="doc-item-doc-2"]');
+    await expect(doc1Item).toBeVisible();
+    await expect(doc2Item).toBeVisible();
+    await expect(doc1Item.locator('text=Resume — john_doe_resume_2026.pdf')).toBeVisible();
+    await expect(doc1Item.locator('text=2 chunks')).toBeVisible();
+    await expect(doc2Item.locator('text=Cover letter — pasted-cover_letter-2026-08-15')).toBeVisible();
+
+    // Test Add Document toggle
+    const addDocBtn = sidepanel.locator('[data-testid="add-document-btn"]');
+    await addDocBtn.click();
+    await expect(sidepanel.locator('[data-testid="add-document-panel"]')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="file-upload-input"]')).toBeVisible();
+
+    // Switch to Paste text tab
+    await sidepanel.locator('[data-testid="tab-paste-text-btn"]').click();
+    await expect(sidepanel.locator('[data-testid="paste-text-input"]')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="submit-paste-btn"]')).toBeVisible();
+
+    // Cancel Add Document
+    await sidepanel.locator('[data-testid="cancel-add-doc-btn"]').click();
+    await expect(sidepanel.locator('[data-testid="add-document-panel"]')).toHaveCount(0);
+
+    // Delete doc-1
+    const deleteDoc1Btn = sidepanel.locator('[data-testid="delete-doc-btn-doc-1"]');
+    await expect(deleteDoc1Btn).toBeVisible();
+    await deleteDoc1Btn.click();
+
+    // Verify doc-1 is removed and count updates to 1
+    await expect(sidepanel.locator('text=Documents · 1')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('[data-testid="doc-item-doc-1"]')).toHaveCount(0);
+    await expect(sidepanel.locator('[data-testid="doc-item-doc-2"]')).toBeVisible();
   });
 
   test('Media Branching: video questions render dedicated "Video Talking Points & Script" card', async () => {

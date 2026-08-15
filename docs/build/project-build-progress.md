@@ -95,6 +95,16 @@
   4. **Sidepanel Usage & Quotas View (`UsageQuotasView.tsx` & `ingestError.ts`)**: Updated cover letter card to "Daily cover letters" showing `X of 1 used today (Y remaining) · resets midnight UTC`; updated `describeIngestError` to prioritize user-friendly error messages from Edge function responses.
   5. **Verification & Testing**: Updated unit tests in `settings.test.ts` and `ingestError.test.ts` (194 tests passing), verified TypeScript compilation (`pnpm compile`), and added Playwright E2E spec in `e2e/settings-privacy.spec.ts` (all 20 tests passing).
 
+- 2026-08-15 — **Documents upload consolidated, per-document deletion, row truncation & usage quotas breakdown completed** on branch `fm/jobibi-documents-management-row-truncation` (PR #35). Consolidated document upload into the Documents card, added per-document deletion, prevented multiline row wrapping with ellipsis truncation in Memory tab, and added draft generation attempt sub-bar in Usage & Quotas:
+  1. **MemoryBank Layout Consolidation (`MemoryBank.tsx`)**: Removed the standalone upload dropzone card from the top of the Memory tab. Consolidated document creation directly into the Documents card header via `+ Add document` toggle button.
+  2. **Add Document Sub-panel (`AddDocument.tsx`)**: Built a tabbed inline creation panel inside the Documents card supporting both:
+     - **File upload**: PDF, DOCX, TXT files up to 20MB with DocumentKind selector (`resume`, `cover_letter`, `transcript`), uploading to Supabase Storage and ingesting via `ingest` Edge Function.
+     - **Paste text**: Textarea with min 20 / max 20,000 char validation (`validatePaste`) and DocumentKind selector (`resume`, `cover_letter`), ingesting via `ingest` Edge Function with `origin: 'user_written'`.
+  3. **Per-Document Deletion Action (`MemoryBank.tsx`)**: Each document row now features a dedicated Delete button. Clicking Delete purges the document's file from Supabase Storage (`supabase.storage.from('documents').remove([doc.storage_path])`), deletes associated vector chunks from `public.memory_chunks`, deletes the document record from `public.documents`, optimistically updates the local state, and shows a friendly status notification.
+  4. **Single-Line Flex Row with Ellipsis Truncation**: Structured each document item as a flex container (`min-w-0`) with `min-w-0 flex-1 truncate text-[13px] text-ink` for the kind & filename label (`<span className="font-semibold capitalize">{KIND_LABELS[doc.kind]}</span> — <span className="text-ink-muted">{doc.file_name}</span>`) preventing multiline wrapping of long filenames alongside the fixed-width chunk count badge and Delete action.
+  5. **Usage & Quotas View Sub-bar (`UsageQuotasView.tsx`)**: Expanded the "Daily cover letters" card to render dual progress sub-bars: "Saved to memory" (`coverLettersUsed / DAILY_COVER_LETTER_LIMIT`) and "Draft generations" (`coverAttemptsUsed / DAILY_COVER_LETTER_ATTEMPT_LIMIT` querying `cover_letter_attempts` created today UTC).
+  6. **Verification & Testing**: Added unit tests in `documents.test.ts` for paste validation, synthetic provenance, and formatting (all 199 unit tests passing via `pnpm test`), verified TypeScript compilation (`pnpm compile`), and added Playwright E2E coverage in `e2e/settings-privacy.spec.ts` for Documents card add/delete/truncation and dual cover letter quotas (all 21 E2E tests passing in ~28s).
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -106,7 +116,7 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit. All 194 unit tests and 20 Playwright E2E tests passing with 0 errors.
+S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown. All 199 unit tests and 21 Playwright E2E tests passing with 0 errors.
 
 
 

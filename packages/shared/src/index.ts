@@ -91,3 +91,13 @@ export {
 } from './settings/settings.ts';
 export type { OutputLength, OutputLengthConfig } from './settings/settings.ts';
 
+// Paste validation (S3b, S8, S9) — pure text validation, safe for extension bundle
+export {
+  PASTE_ALLOWED_KINDS,
+  PASTE_MIN_CHARS,
+  PASTE_MAX_CHARS,
+  validatePaste,
+  pastedDocumentProvenance,
+} from './ingestion/paste.ts';
+export type { PasteValidationResult, PastedDocumentProvenance } from './ingestion/paste.ts';
+
