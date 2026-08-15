@@ -269,10 +269,19 @@ export default defineContentScript({
       const target = e.target as Element | null;
       if (!target) return;
       const submitEl = target.closest(
-        'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i]',
+        'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i], button[aria-label*="Submit" i], button[aria-label*="Continue" i], button[data-testid*="continue" i], [class*="continue" i], button[aria-label*="Update" i], [data-testid*="update" i], button[aria-label*="Save" i], [data-testid*="save" i]',
       );
       if (submitEl) {
         scheduleCapture('click-submit', 300);
+        return;
+      }
+      // textContent fallback for ATS-specific labels (Update, Save, etc.)
+      const btn = (e.target as Element | null)?.closest('button, input[type="submit"]');
+      if (btn) {
+        const text = btn.textContent?.trim() ?? '';
+        if (/^(submit|continue|next|update|save|save and continue|review|done|next step)$/i.test(text)) {
+          scheduleCapture('click-text-match', 300);
+        }
       }
     };
     document.addEventListener('click', onClickCapture, true);

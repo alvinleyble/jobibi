@@ -65,6 +65,37 @@ export function MemoryBank({ userId }: MemoryBankProps) {
 
   useEffect(() => {
     void refresh();
+
+    let debounceTimer: number | null = null;
+    const triggerRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        void refresh();
+      }, 250);
+    };
+
+    const onMsg = (m: unknown) => {
+      if (typeof m === 'object' && m !== null) {
+        const msg = m as { type?: string };
+        if (msg.type === 'JOBIBI_CAPTURE_COMPLETED') {
+          triggerRefresh();
+        }
+      }
+    };
+    browser.runtime.onMessage.addListener(onMsg as Parameters<typeof browser.runtime.onMessage.addListener>[0]);
+
+    const onStore = (changes: Record<string, unknown>, area: string) => {
+      if (area === 'local' && 'jobibi_last_capture' in changes) {
+        triggerRefresh();
+      }
+    };
+    browser.storage.onChanged.addListener(onStore);
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      browser.runtime.onMessage.removeListener(onMsg as Parameters<typeof browser.runtime.onMessage.removeListener>[0]);
+      browser.storage.onChanged.removeListener(onStore);
+    };
   }, [refresh]);
 
   const deleteDocument = async (doc: DocumentRow) => {

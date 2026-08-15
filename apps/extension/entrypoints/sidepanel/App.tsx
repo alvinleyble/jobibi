@@ -33,6 +33,74 @@ function App() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Capture toast state across tabs
+  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let toastTimer: number | null = null;
+    let errorTimer: number | null = null;
+
+    const showToast = (inserted: number, dropped = 0, updated = 0) => {
+      const total = inserted + updated;
+      let msg: string;
+      if (total > 0) {
+        msg = `Saved ${total} answer${total === 1 ? '' : 's'} to memory`;
+        if (dropped) msg += ` · ${dropped} skipped`;
+      } else if (dropped) {
+        msg = `${dropped} answer${dropped === 1 ? '' : 's'} skipped (mismatched)`;
+      } else {
+        // Capture ran but counts unclear — still confirm to user
+        msg = 'Answers saved to memory';
+      }
+      setCaptureMsg(msg);
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => setCaptureMsg(null), 4000);
+    };
+
+    const showError = (message: string) => {
+      setCaptureError(`Could not save application answers: ${message}`);
+      if (errorTimer) clearTimeout(errorTimer);
+      errorTimer = window.setTimeout(() => setCaptureError(null), 6000);
+    };
+
+    const onMsg = (message: unknown) => {
+      if (typeof message === 'object' && message !== null) {
+        const m = message as { type?: string; payload?: { inserted?: number; droppedMismatched?: number; updated?: number; message?: string } };
+        if (m.type === 'JOBIBI_CAPTURE_COMPLETED' && m.payload) {
+          showToast(m.payload.inserted ?? 0, m.payload.droppedMismatched ?? 0, (m.payload as { updated?: number }).updated ?? 0);
+        } else if (m.type === 'JOBIBI_CAPTURE_FAILED' && m.payload?.message) {
+          showError(m.payload.message);
+        }
+      }
+    };
+    browser.runtime.onMessage.addListener(onMsg as Parameters<typeof browser.runtime.onMessage.addListener>[0]);
+
+    const onStorageChanged = (changes: Record<string, unknown>, area: string) => {
+      if (area !== 'local') return;
+      if ('jobibi_last_capture' in changes) {
+        const val = (changes.jobibi_last_capture as { newValue?: { inserted?: number; updated?: number; droppedMismatched?: number } })?.newValue;
+        if (val) {
+          showToast(val.inserted ?? 0, val.droppedMismatched ?? 0, val.updated ?? 0);
+        }
+      }
+      if ('jobibi_last_capture_error' in changes) {
+        const val = (changes.jobibi_last_capture_error as { newValue?: { message?: string } })?.newValue;
+        if (val?.message) {
+          showError(val.message);
+        }
+      }
+    };
+    browser.storage.onChanged.addListener(onStorageChanged);
+
+    return () => {
+      if (toastTimer) clearTimeout(toastTimer);
+      if (errorTimer) clearTimeout(errorTimer);
+      browser.runtime.onMessage.removeListener(onMsg as Parameters<typeof browser.runtime.onMessage.removeListener>[0]);
+      browser.storage.onChanged.removeListener(onStorageChanged);
+    };
+  }, []);
+
   useEffect(() => {
     if (!session?.user?.id) {
       setIsOnboarded(null);
@@ -338,6 +406,24 @@ function App() {
 
       {/* Main Scrollable Content Area */}
       <main className="flex-1 overflow-y-auto px-4 pb-5">
+        {/* Capture Toast Banner */}
+        {captureMsg ? (
+          <div
+            data-testid="capture-toast"
+            className="mb-3 rounded-lg border border-success-tint-border bg-success-tint px-3 py-2 text-xs font-medium text-success"
+          >
+            {captureMsg}
+          </div>
+        ) : null}
+        {captureError ? (
+          <div
+            data-testid="capture-error-toast"
+            className="mb-3 rounded-lg border border-danger-tint-border bg-danger-tint px-3 py-2 text-xs font-medium text-danger"
+          >
+            {captureError}
+          </div>
+        ) : null}
+
         {activeView === 'usage' ? (
           <UsageQuotasView userId={session.user.id} isBetaTester={isBetaTester} />
         ) : activeView === 'account' ? (

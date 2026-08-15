@@ -123,6 +123,14 @@
   7. **Verification**: 237 unit tests passing (218 `packages/shared`, 19 `apps/extension`), `pnpm compile` clean, `pnpm build` clean at 1.08 MB, `deno lint` clean.
   8. **Open for the slice that first opens a local database**: PGlite's bundled JS calls direct `eval`, and `wxt.config.ts` declares no `content_security_policy`, so MV3 extension pages get the default `script-src 'self'` — no `eval`, no `wasm-unsafe-eval`. Needs a CSP entry, an offscreen document, or a sandboxed iframe. Also note D20/D21/D22 are referenced by the S14 brief but are not yet written into `docs/DECISIONS.md`, which still ends at D19.
 
+- 2026-08-15 — **`jobibi-capture-background-immediacy` completed** on branch `fm/jobibi-capture-background-immediacy`. Resolves all four capture data loss and refresh lag issues identified in empirical scout report (`data/jobibi-indeed-capture-immediacy-scout/report.md`):
+  1. **D-1 (Background Capture Routing)**: Moved `JOBIBI_CAPTURE` message handling from `JobStreetQuestions.tsx` (Suggest tab) to the background service worker (`apps/extension/entrypoints/background.ts`). Capture payloads are processed and submitted to the `capture` Edge Function even when the sidepanel is closed or on Memory/Settings tabs. Successful capture writes `jobibi_last_capture` to `browser.storage.local` and broadcasts `JOBIBI_CAPTURE_COMPLETED`.
+  2. **D-2 (Reactive Memory Refresh & Toast Hoisting)**: `MemoryBank.tsx` now listens reactively to `JOBIBI_CAPTURE_COMPLETED` runtime messages and `jobibi_last_capture` storage changes, debouncing by 250ms and calling `refresh()` immediately so captured answers appear on screen without page/panel reload. Capture toast feedback is hoisted to `App.tsx` and displayed across all active sidepanel tabs. Removed redundant `draftText` sidepanel enrichment from `JobStreetQuestions.tsx` to maintain content script as single authoritative source (D13).
+  3. **D-3 (Edge Function Latency Streamlining)**: `supabase/functions/capture/index.ts` instantiates `Supabase.ai.Session('gte-small')` once at request scope instead of constructing per answer; queries max `chunk_index` once prior to the answer loop and increments locally; makes `maybeTriggerStyleProfileRebuild` fire-and-forget to eliminate response latency.
+  4. **D-4 (Indeed Selector Alignment)**: Aligned `indeed.content.ts` submit/click selector to match `button[aria-label*="Continue" i]`, `button[data-testid*="continue" i]`, and `[class*="continue" i]`.
+  5. **D-5 (Update/Save Capture Fix)**: Fixed Indeed SmartApply review → Edit → Update flow where clicking **"Update"** did not trigger capture. Extended click-submit selector in `indeed.content.ts`, `jobstreet.content.ts`, and `linkedin.content.ts` with `button[aria-label*="Update" i]`, `[data-testid*="update" i]`, `button[aria-label*="Save" i]`, `[data-testid*="save" i]` and added a `textContent` fallback matching `/^(submit|continue|next|update|save|save and continue|review|done|next step)$/i` so ATS-specific labels (Update, Save, Save and continue, etc.) trigger `scheduleCapture` via `click-text-match`.
+  6. **Verification & Tests**: 268 unit tests passing (`pnpm test` — 236 `packages/shared` + 32 `apps/extension`), `pnpm compile` clean, extension builds clean at 1.29 MB. New tests in `packages/shared/src/adapters/indeed.test.ts` cover `button[aria-label="Update"]` selector and `textContent` fallback for `Update` / `Save and continue`.
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -134,9 +142,10 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop + S14A storage abstraction & PGlite engine (below). All 199 unit tests and 21 Playwright E2E tests passing with 0 errors as of PR #35; PR #36 removes the S5c/S7A sensitive-fields tests along with the feature; S14A adds 45, bringing the unit suite to 237 (218 `packages/shared`, 19 `apps/extension`).
+S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop + S14A storage abstraction & PGlite engine + `jobibi-capture-background-immediacy` (background capture routing, reactive Memory refresh, Edge function latency streamlining, Indeed selector alignment, Update/Save capture fix). All 268 unit tests passing with 0 errors.
 
 **Still to come in S14:** S14A only builds the seam. Nothing selects a posture, nothing opens a local database, and no UI mentions Local BYO-Key yet.
+
 
 
 

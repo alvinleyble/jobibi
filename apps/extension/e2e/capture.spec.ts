@@ -22,7 +22,7 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
     await ext.close();
   });
 
-  test('Form submission captures entered answers, verifies mappings (D16), and reports capture status', async () => {
+  test('Form submission captures entered answers in background SW and shows toast across tabs', async () => {
     const sidepanel = await openSidepanel(ext.context, ext.extensionId);
     await seedSession(sidepanel, { isBetaTester: true });
     await sidepanel.reload();
@@ -30,14 +30,15 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
 
     let captureRequestBody: any = null;
 
-    // Intercept capture Edge function
-    await sidepanel.route('**/functions/v1/capture', async (route) => {
+    // Intercept capture Edge function across entire browser context (SW + sidepanel)
+    await ext.context.route('**/functions/v1/capture', async (route) => {
       const postData = route.request().postDataJSON();
       captureRequestBody = postData;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
+          ok: true,
           inserted: 2,
           droppedMismatched: 0,
           droppedSensitive: 0,
@@ -66,7 +67,7 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
     // Submit the form
     await atsPage.locator('button[data-automation="submit-application"]').click();
 
-    // Verify sidepanel receives capture and invokes edge function with correct payload
+    // Verify sidepanel receives capture toast banner across tab
     await sidepanel.bringToFront();
     await expect(sidepanel.locator('text=Saved 2 answers to memory')).toBeVisible({ timeout: 7000 });
 
@@ -94,5 +95,70 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
     // Verify job context
     expect(captureRequestBody.application.roleTitle).toBe('Senior Software Engineer');
     expect(captureRequestBody.application.company).toBe('TechCorp Philippines');
+  });
+
+  test('Memory tab reactively refreshes and shows captured answers immediately without reload (D-2)', async () => {
+    const sidepanel = await openSidepanel(ext.context, ext.extensionId);
+    await seedSession(sidepanel, { isBetaTester: true });
+    await sidepanel.reload();
+    await sidepanel.waitForLoadState('domcontentloaded');
+
+    let capturedRows: any[] = [];
+
+    // Intercept REST qa_pairs endpoint to serve dynamic rows
+    await sidepanel.unroute('**/rest/v1/qa_pairs*');
+    await sidepanel.route('**/rest/v1/qa_pairs*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(capturedRows),
+      });
+    });
+
+    // Intercept capture Edge function
+    await ext.context.route('**/functions/v1/capture', async (route) => {
+      // When capture completes, make the new row available to qa_pairs queries
+      capturedRows = [
+        {
+          id: 'qa-indeed-react-1',
+          question_label: 'How many years of work experience do you have with Playwright?',
+          question_norm: 'how many years of work experience do you have with playwright',
+          answer_text: '3 years of end-to-end testing with Playwright.',
+          origin: 'user_written',
+          created_at: new Date().toISOString(),
+        },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          inserted: 1,
+          droppedMismatched: 0,
+        }),
+      });
+    });
+
+    // Switch sidepanel to Memory tab
+    await sidepanel.bringToFront();
+    await sidepanel.click('[data-testid="tab-memory-btn"]');
+    await expect(sidepanel.locator('text=Stored answers · 0')).toBeVisible({ timeout: 5000 });
+
+    // Open Indeed apply page
+    const atsPage = await ext.context.newPage();
+    const url = getAtsUrl('indeed', server.port);
+    await atsPage.goto(url);
+    await atsPage.waitForLoadState('domcontentloaded');
+
+    // Fill answer and click Continue button (D-4 selector coverage)
+    await atsPage.locator('#q_indeed_1').fill('3 years of end-to-end testing with Playwright.');
+    await atsPage.locator('button.ia-continueButton').click();
+
+    // Verify sidepanel on Memory tab reactively refreshes and renders the newly captured answer
+    await sidepanel.bringToFront();
+    await expect(sidepanel.locator('text=Saved 1 answer to memory')).toBeVisible({ timeout: 7000 });
+    await expect(sidepanel.locator('text=Stored answers · 1')).toBeVisible({ timeout: 7000 });
+    await expect(sidepanel.locator('text=How many years of work experience do you have with Playwright?')).toBeVisible({ timeout: 7000 });
+    await expect(sidepanel.locator('text=3 years of end-to-end testing with Playwright.')).toBeVisible({ timeout: 7000 });
   });
 });
