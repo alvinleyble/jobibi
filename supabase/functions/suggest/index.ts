@@ -1,6 +1,6 @@
 // S5b: suggest — gate (draft/ask/refuse), draft, gap-question (D10, D15, D8, D14)
 // Gate decides; model never decides refuse. On ask Luna words one anchored gap question
-// after code has already decided. S5c sensitive handling runs ahead of drafting (D17).
+// after code has already decided. Salary/notice handled as dynamic refusal (no stored fact).
 
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
@@ -8,7 +8,6 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { decideGate, ROLE_THRESHOLD } from '../../../packages/shared/src/gate/gate.ts';
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
-import { detectSensitiveUnion, buildProvenanceLine } from '../../../packages/shared/src/gate/sensitive.ts';
 import { findSeenBefore } from '../../../packages/shared/src/capture/capture.ts';
 import type { QaPairRow } from '../../../packages/shared/src/capture/capture.ts';
 import {
@@ -36,7 +35,7 @@ const SuggestRequestSchema = z.object({
 });
 
 const SuggestResponseSchema = z.object({
-  outcome: z.enum(['draft', 'ask', 'refuse', 'confirm']),
+  outcome: z.enum(['draft', 'ask', 'refuse']),
   questionNorm: z.string(),
   questionMatch: z.number(),
   roleMatch: z.number(),
@@ -50,20 +49,6 @@ const SuggestResponseSchema = z.object({
   anchoredChunkText: z.string().optional(),
   // refuse
   refuseMessage: z.string().optional(),
-  // confirm (S5c sensitive)
-  sensitiveKind: z.string().optional(),
-  sensitiveFact: z
-    .object({
-      id: z.string(),
-      kind: z.string(),
-      value: z.string(),
-      stated_at: z.string(),
-      confirmed_at: z.string().nullable().optional(),
-      provenanceLine: z.string(),
-    })
-    .nullable()
-    .optional(),
-  sensitiveVia: z.enum(['rule', 'retrieval', 'both']).nullable().optional(),
   // seen-before (S6 D12) — prior answer for near-duplicate question
   seenBefore: z
     .object({
@@ -292,68 +277,40 @@ Deno.serve(async (req) => {
       seenBefore = null;
     }
 
-    // ── S5c sensitive check (D17) — must run before retrieval/gate/drafting ──
-    // Union: rule OR retrieval against typed sensitive_facts.
-    // Sensitive questions never reach Luna or Auto-Fill.
-    try {
-      const { data: factRows, error: factErr } = await supabase
-        .from('sensitive_facts')
-        .select('id, kind, value, stated_at, confirmed_at, source_application_id')
-        .eq('user_id', user.id)
-        .order('stated_at', { ascending: false })
-        .limit(50);
-      if (factErr) throw factErr;
-      const facts = (factRows as unknown as { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; source_application_id: string | null }[] | null) ?? [];
-      const typedFacts = facts.map((r) => ({
-        id: r.id,
-        kind: r.kind as import('../../../packages/shared/src/gate/sensitive.ts').SensitiveFact['kind'],
-        value: r.value,
-        stated_at: r.stated_at,
-        confirmed_at: r.confirmed_at,
-        source_application_id: r.source_application_id,
-      }));
-      const sensitive = detectSensitiveUnion(parsed.data.question, typedFacts);
-      if (sensitive.isSensitive) {
-        // Build provenance for the matched fact, if any
-        let factPayload: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null = null;
-        if (sensitive.fact) {
-          factPayload = {
-            id: sensitive.fact.id,
-            kind: sensitive.fact.kind,
-            value: sensitive.fact.value,
-            stated_at: sensitive.fact.stated_at,
-            confirmed_at: sensitive.fact.confirmed_at ?? null,
-            provenanceLine: buildProvenanceLine(sensitive.fact),
-          };
-        }
+    // ── Salary/notice dynamic refusal — must run before retrieval/gate/drafting ──
+    // No stored fact is auto-suggested; user must answer directly in the moment.
+    {
+      const nq = parsed.data.question.toLowerCase();
+      let kind: 'salary' | 'notice_period' | null = null;
+      if (nq.includes('salary')) kind = 'salary';
+      else if (nq.includes('notice period') || nq.includes('notice')) kind = 'notice_period';
+      if (kind) {
+        const refuseMsg =
+          kind === 'salary'
+            ? 'This asks for your salary expectation — please enter it directly. We don’t auto-suggest for salary.'
+            : 'This asks for your notice period — please enter it directly. We don’t auto-suggest for notice period.';
+        // Log gate decision for calibration (refuse due to salary/notice)
+        try {
+          await supabase.from('gate_decisions').insert({
+            user_id: user.id,
+            question_norm: questionNorm,
+            question_match: 0,
+            role_match: 0,
+            outcome: 'refuse',
+            user_action: null,
+          });
+        } catch { /* best-effort */ }
         return jsonResponse(
           SuggestResponseSchema.parse({
-            outcome: 'confirm',
+            outcome: 'refuse',
             questionNorm,
             questionMatch: 0,
             roleMatch: 0,
-            sensitiveKind: sensitive.kind ?? undefined,
-            sensitiveFact: factPayload,
-            sensitiveVia: sensitive.via,
+            refuseMessage: refuseMsg,
           }),
           200,
         );
       }
-    } catch (e) {
-      // Fail-closed per D17 + captain decision: on DB/check error, do not draft
-      console.error('[suggest] sensitive check failed (fail-closed)', e);
-      return jsonResponse(
-        SuggestResponseSchema.parse({
-          outcome: 'confirm',
-          questionNorm,
-          questionMatch: 0,
-          roleMatch: 0,
-          sensitiveKind: undefined,
-          sensitiveFact: null,
-          sensitiveVia: null,
-        }),
-        200,
-      );
     }
 
     type MemRow = { id: string | null; text: string; embedding: number[] | null };

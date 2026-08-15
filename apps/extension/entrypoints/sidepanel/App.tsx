@@ -118,7 +118,6 @@ function App() {
         profilesRes,
         documentsRes,
         memoryChunksRes,
-        sensitiveFactsRes,
         qaPairsRes,
         gapAnswersRes,
         styleProfileRes,
@@ -128,7 +127,6 @@ function App() {
         supabase.from('profiles').select('*').eq('id', userId),
         supabase.from('documents').select('*').eq('user_id', userId),
         supabase.from('memory_chunks').select('*').eq('user_id', userId),
-        supabase.from('sensitive_facts').select('*').eq('user_id', userId),
         supabase.from('qa_pairs').select('*').eq('user_id', userId),
         supabase.from('gap_answers').select('*').eq('user_id', userId),
         supabase.from('style_profile').select('*').eq('user_id', userId),
@@ -143,7 +141,6 @@ function App() {
         profiles: profilesRes.data ?? [],
         documents: documentsRes.data ?? [],
         memory_chunks: memoryChunksRes.data ?? [],
-        sensitive_facts: sensitiveFactsRes.data ?? [],
         qa_pairs: qaPairsRes.data ?? [],
         gap_answers: gapAnswersRes.data ?? [],
         style_profile: styleProfileRes.data ?? [],
@@ -193,7 +190,6 @@ function App() {
 
       await Promise.allSettled([
         supabase.from('memory_chunks').delete().eq('user_id', userId),
-        supabase.from('sensitive_facts').delete().eq('user_id', userId),
         supabase.from('qa_pairs').delete().eq('user_id', userId),
         supabase.from('gap_answers').delete().eq('user_id', userId),
         supabase.from('documents').delete().eq('user_id', userId),
