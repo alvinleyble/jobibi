@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { APP_NAME } from '@jobibi/shared';
 import { useSession } from './useSession';
 import SignIn from './SignIn';
 import { Onboarding } from './Onboarding';
@@ -7,11 +6,32 @@ import { supabase } from './supabase';
 import JobStreetQuestions from './JobStreetQuestions';
 import MemoryBank from './MemoryBank';
 import { Settings } from './Settings';
+import { UsageQuotasView } from './UsageQuotasView';
+import { AccountView } from './AccountView';
+import { useTheme } from './useTheme';
+import { getUserInitials } from './userUtils';
+import { humanizeErrorMessage } from './ingestError';
+
+export type TabType = 'suggest' | 'memory' | 'settings';
+export type SubViewType = null | 'usage' | 'account';
 
 function App() {
   const { session, loading, isBetaTester } = useSession();
-  const [showSettings, setShowSettings] = useState(false);
+  const { theme, toggleTheme } = useTheme();
+  const [activeTab, setActiveTab] = useState<TabType>('suggest');
+  const [activeView, setActiveView] = useState<SubViewType>(null);
   const [isOnboarded, setIsOnboarded] = useState<boolean | null>(null);
+
+  // Export Data state
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+
+  // Delete everything modal state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!session?.user?.id) {
@@ -80,10 +100,122 @@ function App() {
     setIsOnboarded(true);
   };
 
+  const handleTabSwitch = (tab: TabType) => {
+    setActiveTab(tab);
+    setActiveView(null);
+  };
+
+  const handleExportData = async () => {
+    if (!session?.user?.id) return;
+    const userId = session.user.id;
+    const userEmail = session.user.email ?? '';
+
+    setExporting(true);
+    setExportError(null);
+    setExportSuccess(null);
+    try {
+      const [
+        profilesRes,
+        documentsRes,
+        memoryChunksRes,
+        sensitiveFactsRes,
+        qaPairsRes,
+        gapAnswersRes,
+        styleProfileRes,
+        applicationsRes,
+        gateDecisionsRes,
+      ] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', userId),
+        supabase.from('documents').select('*').eq('user_id', userId),
+        supabase.from('memory_chunks').select('*').eq('user_id', userId),
+        supabase.from('sensitive_facts').select('*').eq('user_id', userId),
+        supabase.from('qa_pairs').select('*').eq('user_id', userId),
+        supabase.from('gap_answers').select('*').eq('user_id', userId),
+        supabase.from('style_profile').select('*').eq('user_id', userId),
+        supabase.from('applications').select('*').eq('user_id', userId),
+        supabase.from('gate_decisions').select('*').eq('user_id', userId),
+      ]);
+
+      const exportData = {
+        exportedAt: new Date().toISOString(),
+        userId,
+        userEmail,
+        profiles: profilesRes.data ?? [],
+        documents: documentsRes.data ?? [],
+        memory_chunks: memoryChunksRes.data ?? [],
+        sensitive_facts: sensitiveFactsRes.data ?? [],
+        qa_pairs: qaPairsRes.data ?? [],
+        gap_answers: gapAnswersRes.data ?? [],
+        style_profile: styleProfileRes.data ?? [],
+        applications: applicationsRes.data ?? [],
+        gate_decisions: gateDecisionsRes.data ?? [],
+      };
+
+      const jsonStr = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `jobibi-data-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportSuccess('Data exported successfully!');
+      setTimeout(() => setExportSuccess(null), 3000);
+    } catch (err) {
+      setExportError(humanizeErrorMessage(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDeleteEverything = async () => {
+    if (!session?.user?.id) return;
+    if (deleteConfirmText.trim() !== 'DELETE') {
+      setDeleteError('Please type "DELETE" exactly to confirm.');
+      return;
+    }
+    const userId = session.user.id;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      try {
+        const { data: storageFiles } = await supabase.storage.from('documents').list(userId);
+        if (storageFiles && storageFiles.length > 0) {
+          await supabase.storage
+            .from('documents')
+            .remove(storageFiles.map((f) => `${userId}/${f.name}`));
+        }
+      } catch (e) {
+        console.warn('[Settings] Storage purge exception:', e);
+      }
+
+      await Promise.allSettled([
+        supabase.from('memory_chunks').delete().eq('user_id', userId),
+        supabase.from('sensitive_facts').delete().eq('user_id', userId),
+        supabase.from('qa_pairs').delete().eq('user_id', userId),
+        supabase.from('gap_answers').delete().eq('user_id', userId),
+        supabase.from('documents').delete().eq('user_id', userId),
+        supabase.from('style_profile').delete().eq('user_id', userId),
+        supabase.from('gate_decisions').delete().eq('user_id', userId),
+        supabase.from('capture_mismatches').delete().eq('user_id', userId),
+        supabase.from('extraction_failures').delete().eq('user_id', userId),
+        supabase.from('applications').delete().eq('user_id', userId),
+        supabase.from('profiles').delete().eq('id', userId),
+      ]);
+
+      await supabase.auth.signOut();
+    } catch (err) {
+      setDeleteError(humanizeErrorMessage(err instanceof Error ? err.message : String(err)));
+      setDeleting(false);
+    }
+  };
+
   if (loading || (session && isOnboarded === null)) {
     return (
-      <div className="flex h-screen items-center justify-center bg-white">
-        <p className="text-sm text-slate-500">Loading…</p>
+      <div className="flex h-screen items-center justify-center bg-panel">
+        <p className="text-sm text-ink-muted">Loading…</p>
       </div>
     );
   }
@@ -102,62 +234,206 @@ function App() {
     );
   }
 
+  const initials = getUserInitials(session.user.email);
+
   return (
-    <div className="flex h-screen flex-col items-center overflow-y-auto bg-white">
-      {/* Top Header Navigation Bar */}
-      <header className="flex w-full max-w-md items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h1 className="text-base font-bold text-slate-900 tracking-tight">{APP_NAME}</h1>
-          {isBetaTester ? (
-            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
-              BETA
+    <div className="flex h-screen w-full max-w-[400px] flex-col bg-panel font-sans text-ink">
+      {/* Top Header Chrome */}
+      <header className="shrink-0">
+        {activeView === null ? (
+          <div>
+            {/* Wordmark, Theme Toggle, Avatar */}
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[19px] font-extrabold tracking-[-0.01em] text-ink">
+                  Jobibi
+                </span>
+                {isBetaTester ? (
+                  <span className="rounded-md border border-success-tint-border bg-success-tint px-1.5 py-0.5 text-[10px] font-bold text-success">
+                    BETA
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  aria-label="Toggle dark mode"
+                  title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                  data-testid="theme-toggle-btn"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border-[1.5px] border-card-border bg-card text-[14px] text-ink transition-colors hover:bg-subtle cursor-pointer"
+                >
+                  {theme === 'dark' ? '☀' : '☾'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveView('account')}
+                  aria-label="Open Account"
+                  title={`Account (${session.user.email})`}
+                  data-testid="avatar-btn"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border-[1.5px] border-accent-tint-border bg-accent-tint text-[12.5px] font-extrabold text-accent transition-opacity hover:opacity-80 cursor-pointer"
+                >
+                  {initials}
+                </button>
+              </div>
+            </div>
+
+            {/* 3-Tab Segmented Switcher */}
+            <nav
+              aria-label="Main Navigation"
+              className="mx-4 mb-3 flex rounded-[10px] border-[1.5px] border-card-border bg-track p-[3px] gap-0.5"
+            >
+              <button
+                type="button"
+                onClick={() => handleTabSwitch('suggest')}
+                data-testid="tab-suggest-btn"
+                className={`flex-1 rounded-[7px] py-1.5 text-center text-[13.5px] font-bold transition-colors cursor-pointer border-none ${
+                  activeTab === 'suggest'
+                    ? 'bg-accent text-on-accent'
+                    : 'bg-transparent text-ink-secondary hover:text-ink'
+                }`}
+              >
+                Suggest
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTabSwitch('memory')}
+                data-testid="tab-memory-btn"
+                className={`flex-1 rounded-[7px] py-1.5 text-center text-[13.5px] font-bold transition-colors cursor-pointer border-none ${
+                  activeTab === 'memory'
+                    ? 'bg-accent text-on-accent'
+                    : 'bg-transparent text-ink-secondary hover:text-ink'
+                }`}
+              >
+                Memory
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTabSwitch('settings')}
+                data-testid="tab-settings-btn"
+                className={`flex-1 rounded-[7px] py-1.5 text-center text-[13.5px] font-bold transition-colors cursor-pointer border-none ${
+                  activeTab === 'settings'
+                    ? 'bg-accent text-on-accent'
+                    : 'bg-transparent text-ink-secondary hover:text-ink'
+                }`}
+              >
+                Settings
+              </button>
+            </nav>
+          </div>
+        ) : (
+          /* Back Header for Sub-Screens */
+          <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-card-border">
+            <button
+              type="button"
+              onClick={() => setActiveView(null)}
+              aria-label="Back"
+              data-testid="settings-back-btn"
+              className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border-[1.5px] border-card-border bg-card text-[14px] font-bold text-ink transition-colors hover:bg-subtle cursor-pointer"
+            >
+              ←
+            </button>
+            <span className="text-[17px] font-extrabold text-ink">
+              {activeView === 'usage' ? 'Usage & quotas' : 'Account'}
             </span>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="max-w-[180px] truncate text-xs text-slate-500" title={`Signed in as ${session.user.email}`}>
-            Signed in as {session.user.email}
-          </span>
-          <button
-            type="button"
-            onClick={() => setShowSettings((prev) => !prev)}
-            aria-label="Settings"
-            title="Settings & Privacy"
-            data-testid="settings-btn"
-            className={`rounded p-1.5 text-xs font-medium transition-colors ${
-              showSettings
-                ? 'bg-slate-900 text-white'
-                : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            ⚙️
-          </button>
-          <button
-            type="button"
-            onClick={() => supabase.auth.signOut()}
-            aria-label="Sign out"
-            data-testid="sign-out-btn"
-            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Sign out
-          </button>
-        </div>
+          </div>
+        )}
       </header>
 
-      {/* Main View vs Settings View */}
-      {showSettings ? (
-        <Settings
-          userId={session.user.id}
-          userEmail={session.user.email ?? ''}
-          isBetaTester={isBetaTester}
-          onClose={() => setShowSettings(false)}
-        />
-      ) : (
-        <>
+      {/* Main Scrollable Content Area */}
+      <main className="flex-1 overflow-y-auto px-4 pb-5">
+        {activeView === 'usage' ? (
+          <UsageQuotasView userId={session.user.id} isBetaTester={isBetaTester} />
+        ) : activeView === 'account' ? (
+          <AccountView
+            userId={session.user.id}
+            userEmail={session.user.email ?? ''}
+            isBetaTester={isBetaTester}
+            onExportData={handleExportData}
+            exporting={exporting}
+            exportSuccess={exportSuccess}
+            exportError={exportError}
+            onOpenDeleteModal={() => {
+              setShowDeleteModal(true);
+              setDeleteConfirmText('');
+              setDeleteError(null);
+            }}
+            onSignOut={() => supabase.auth.signOut()}
+          />
+        ) : activeTab === 'suggest' ? (
           <JobStreetQuestions isBetaTester={isBetaTester} />
+        ) : activeTab === 'memory' ? (
           <MemoryBank userId={session.user.id} />
-        </>
-      )}
+        ) : (
+          <Settings
+            userId={session.user.id}
+            userEmail={session.user.email ?? ''}
+            isBetaTester={isBetaTester}
+            onOpenUsage={() => setActiveView('usage')}
+            onExportData={handleExportData}
+            exporting={exporting}
+            exportSuccess={exportSuccess}
+            exportError={exportError}
+            onOpenDeleteModal={() => {
+              setShowDeleteModal(true);
+              setDeleteConfirmText('');
+              setDeleteError(null);
+            }}
+          />
+        )}
+      </main>
+
+      {/* Delete Everything Confirmation Modal */}
+      {showDeleteModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+        >
+          <div className="w-full max-w-[320px] rounded-xl border border-card-border bg-card p-4.5 shadow-2xl text-left">
+            <h3 id="delete-modal-title" className="text-[15px] font-extrabold text-danger">
+              Permanently Delete Everything?
+            </h3>
+            <p className="mt-2 text-[12.5px] leading-[1.5] text-ink-secondary">
+              This permanently removes your documents, stored answers, and facts. This cannot be undone.
+            </p>
+            <p className="mt-3 text-[12px] font-bold text-ink">
+              Type <span className="font-mono text-danger">DELETE</span> below to confirm:
+            </p>
+            <input
+              type="text"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="DELETE"
+              data-testid="delete-confirm-input"
+              className="mt-1.5 w-full rounded-lg border border-card-border bg-card p-2 text-xs font-mono text-ink focus:border-danger focus:outline-none"
+              disabled={deleting}
+            />
+            {deleteError ? <p className="mt-1.5 text-xs text-danger">{deleteError}</p> : null}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+                className="rounded-lg border border-card-border bg-card px-3 py-1.5 text-xs font-bold text-ink hover:bg-subtle transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteEverything}
+                disabled={deleteConfirmText.trim() !== 'DELETE' || deleting}
+                data-testid="confirm-delete-everything-btn"
+                className="rounded-lg bg-danger px-3 py-1.5 text-xs font-bold text-on-accent hover:opacity-90 disabled:opacity-50 transition-opacity"
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

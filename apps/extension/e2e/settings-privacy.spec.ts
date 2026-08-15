@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { startFixtureServer, type FixtureServer } from './helpers/server';
 import { launchExtensionContext, openSidepanel, seedSession, getAtsUrl, type TestExtensionContext } from './helpers/extension';
 
-test.describe('Settings, Privacy Surface & Caps (S12)', () => {
+test.describe('Settings, Privacy Surface & Caps (S12 & S13)', () => {
   let server: FixtureServer;
   let ext: TestExtensionContext;
 
@@ -22,32 +22,55 @@ test.describe('Settings, Privacy Surface & Caps (S12)', () => {
     await ext.close();
   });
 
-  test('Settings panel: toggles via gear icon in header and displays 3 sections', async () => {
+  test('3-Tab Navigation & Sub-screens: pill switcher and Account / Usage & Quotas drill-ins work', async () => {
     const sidepanel = await openSidepanel(ext.context, ext.extensionId);
     await seedSession(sidepanel, { isBetaTester: true });
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    await expect(sidepanel.locator('text=Signed in as beta-tester@example.com')).toBeVisible({ timeout: 5000 });
+    // Verify header wordmark and avatar
+    await expect(sidepanel.locator('text=Jobibi')).toBeVisible({ timeout: 5000 });
+    const avatarBtn = sidepanel.locator('[data-testid="avatar-btn"]');
+    await expect(avatarBtn).toBeVisible();
 
-    // Click Settings gear button
-    const settingsBtn = sidepanel.locator('[data-testid="settings-btn"]');
-    await expect(settingsBtn).toBeVisible();
-    await settingsBtn.click();
+    // 1. Test Account drill-in via header avatar
+    await avatarBtn.click();
+    await expect(sidepanel.locator('text=beta-tester@example.com')).toBeVisible();
+    await expect(sidepanel.locator('text=BETA TESTER')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="sign-out-btn"]')).toBeVisible();
 
-    // Verify Settings view is rendered with 3 sections
-    await expect(sidepanel.locator('text=Settings & Privacy')).toBeVisible();
-    await expect(sidepanel.locator('text=Drafting Preferences')).toBeVisible();
-    await expect(sidepanel.locator('text=Usage & Quotas')).toBeVisible();
-    await expect(sidepanel.locator('text=Privacy Surface (D12)')).toBeVisible();
-
-    // Click Back button to return to Main panel
+    // Back to root
     const backBtn = sidepanel.locator('[data-testid="settings-back-btn"]');
     await expect(backBtn).toBeVisible();
     await backBtn.click();
 
-    // Verify Main view returns
-    await expect(sidepanel.locator('text=Memory bank (debug)')).toBeVisible();
+    // 2. Test Settings tab
+    const settingsTab = sidepanel.locator('[data-testid="tab-settings-btn"]');
+    await expect(settingsTab).toBeVisible();
+    await settingsTab.click();
+
+    await expect(sidepanel.locator('text=Drafting length')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="settings-usage-btn"]')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="export-data-btn"]')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="delete-everything-btn"]')).toBeVisible();
+
+    // 3. Drill into Usage & Quotas sub-screen
+    await sidepanel.locator('[data-testid="settings-usage-btn"]').click();
+    await expect(sidepanel.locator('text=Usage & quotas')).toBeVisible();
+    await expect(sidepanel.locator('[data-testid="daily-quota-status"]')).toBeVisible();
+
+    // Back from Usage & Quotas to Settings
+    await sidepanel.locator('[data-testid="settings-back-btn"]').click();
+    await expect(sidepanel.locator('text=Drafting length')).toBeVisible();
+
+    // 4. Switch to Memory tab
+    await sidepanel.locator('[data-testid="tab-memory-btn"]').click();
+    await expect(sidepanel.locator('text=Upload a document')).toBeVisible();
+    await expect(sidepanel.locator('text=Draft a cover letter')).toBeVisible();
+
+    // 5. Switch to Suggest tab
+    await sidepanel.locator('[data-testid="tab-suggest-btn"]').click();
+    await expect(sidepanel.locator('[data-screen-label="Suggest"]')).toBeVisible();
   });
 
   test('Drafting Preferences: non-beta users see Medium/Long locked, beta testers can toggle', async () => {
@@ -57,8 +80,8 @@ test.describe('Settings, Privacy Surface & Caps (S12)', () => {
     await sidepanelNonBeta.reload();
     await sidepanelNonBeta.waitForLoadState('domcontentloaded');
 
-    await sidepanelNonBeta.locator('[data-testid="settings-btn"]').click();
-    await expect(sidepanelNonBeta.locator('text=Drafting Preferences')).toBeVisible();
+    await sidepanelNonBeta.locator('[data-testid="tab-settings-btn"]').click();
+    await expect(sidepanelNonBeta.locator('text=Drafting length')).toBeVisible();
 
     const shortRadio = sidepanelNonBeta.locator('input[value="short"]');
     const mediumRadio = sidepanelNonBeta.locator('input[value="medium"]');
@@ -77,7 +100,7 @@ test.describe('Settings, Privacy Surface & Caps (S12)', () => {
     await sidepanelBeta.reload();
     await sidepanelBeta.waitForLoadState('domcontentloaded');
 
-    await sidepanelBeta.locator('[data-testid="settings-btn"]').click();
+    await sidepanelBeta.locator('[data-testid="tab-settings-btn"]').click();
     const betaMediumRadio = sidepanelBeta.locator('input[value="medium"]');
     await expect(betaMediumRadio).toBeEnabled();
 
@@ -104,15 +127,17 @@ test.describe('Settings, Privacy Surface & Caps (S12)', () => {
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    await sidepanel.locator('[data-testid="settings-btn"]').click();
+    // Go to Settings -> Usage & quotas
+    await sidepanel.locator('[data-testid="tab-settings-btn"]').click();
+    await sidepanel.locator('[data-testid="settings-usage-btn"]').click();
 
     // Check Daily quota indicator
     await expect(sidepanel.locator('[data-testid="daily-quota-status"]')).toBeVisible();
-    await expect(sidepanel.locator('text=⚡ 10 / 15 remaining today')).toBeVisible();
+    await expect(sidepanel.locator('text=⚡ 5 of 15 used today (10 remaining)')).toBeVisible();
 
     // Check Cover Letter quota indicator
     await expect(sidepanel.locator('[data-testid="weekly-cover-quota-status"]')).toBeVisible();
-    await expect(sidepanel.locator('text=📄 1 / 1 remaining this week')).toBeVisible();
+    await expect(sidepanel.locator('text=📄 0 of 1 used this week (1 remaining)')).toBeVisible();
   });
 
   test('Privacy Surface: Delete Everything opens confirmation modal requiring "DELETE"', async () => {
@@ -121,7 +146,7 @@ test.describe('Settings, Privacy Surface & Caps (S12)', () => {
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    await sidepanel.locator('[data-testid="settings-btn"]').click();
+    await sidepanel.locator('[data-testid="tab-settings-btn"]').click();
 
     // Click Delete Everything button
     await sidepanel.locator('[data-testid="delete-everything-btn"]').click();
@@ -175,18 +200,21 @@ test.describe('Settings, Privacy Surface & Caps (S12)', () => {
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
+    // Go to Memory tab
+    await sidepanel.locator('[data-testid="tab-memory-btn"]').click();
+
     // Verify stored answer card is visible in Memory Bank
-    await expect(sidepanel.locator('text=Stored Answers (Q&A) (1)')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('text=Stored answers · 1')).toBeVisible({ timeout: 5000 });
     await expect(sidepanel.locator('text=Q: Tell us about your background with TypeScript')).toBeVisible();
     await expect(sidepanel.locator('text=A: I have 5 years building scalable web applications with TypeScript and React.')).toBeVisible();
 
-    // Click trash button to delete the answer
+    // Click delete button to delete the answer
     const deleteBtn = sidepanel.locator('[data-testid="delete-qa-btn-qa-123"]');
     await expect(deleteBtn).toBeVisible();
     await deleteBtn.click();
 
     // Verify answer is purged
-    await expect(sidepanel.locator('text=Stored Answers (Q&A) (0)')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('text=Stored answers · 0')).toBeVisible({ timeout: 5000 });
     await expect(sidepanel.locator('text=No stored Q&A answers yet.')).toBeVisible();
   });
 
@@ -228,11 +256,13 @@ test.describe('Settings, Privacy Surface & Caps (S12)', () => {
 
     await sidepanel.bringToFront();
 
-    const questionCard = sidepanel.locator('li', { hasText: 'Why do you want to work at TechCorp?' });
+    const questionCard = sidepanel.locator('[data-testid="question-card"]', {
+      hasText: 'Why do you want to work at TechCorp?',
+    });
     await expect(questionCard).toBeVisible({ timeout: 7000 });
 
     // Click Suggest
-    await questionCard.locator('button', { hasText: 'Suggest' }).click();
+    await questionCard.locator('[data-testid="suggest-btn"]').click();
 
     // Verify dedicated Video Talking Points & Script card renders
     await expect(sidepanel.locator('[data-testid="video-script-card"]')).toBeVisible({ timeout: 5000 });

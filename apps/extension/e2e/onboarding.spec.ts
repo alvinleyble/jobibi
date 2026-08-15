@@ -130,7 +130,7 @@ test.describe('Streamlined Onboarding Flow', () => {
     await saveBtn.click();
 
     // Verify ingest called with origin: 'user_written'
-    await expect(sidepanel.locator('text=Memory bank (debug)')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('[data-testid="tab-suggest-btn"]')).toBeVisible({ timeout: 5000 });
     expect(ingestCallBody).not.toBeNull();
     expect(ingestCallBody.text).toBe(voiceSummary);
     expect(ingestCallBody.origin).toBe('user_written');
@@ -170,6 +170,6 @@ test.describe('Streamlined Onboarding Flow', () => {
     await skipBtn.click();
 
     // Verify main view is rendered smoothly
-    await expect(sidepanel.locator('text=Memory bank (debug)')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('[data-testid="tab-suggest-btn"]')).toBeVisible({ timeout: 5000 });
   });
 });

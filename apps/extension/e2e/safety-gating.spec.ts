@@ -49,13 +49,15 @@ test.describe('Safety & Confidence Gating (D16 & D17)', () => {
 
     await sidepanel.bringToFront();
 
-    // Locate the low confidence question (confidence = 0.50 via proximity)
-    const lowConfCard = sidepanel.locator('li', { hasText: 'What are your salary expectations?' });
+    // Locate the low confidence question card (confidence = 0.50 via proximity)
+    const lowConfCard = sidepanel.locator('[data-testid="question-card"]', {
+      hasText: 'What are your salary expectations?',
+    });
     await expect(lowConfCard).toBeVisible({ timeout: 7000 });
-    await expect(lowConfCard.locator('text=low · 0.50')).toBeVisible();
+    await expect(sidepanel.locator('span[title="Low match quality"]')).toBeVisible();
 
     // Click Suggest on the low confidence field
-    await lowConfCard.locator('button', { hasText: 'Suggest' }).click();
+    await lowConfCard.locator('[data-testid="suggest-btn"]').click();
 
     // Wait for draft card to appear
     await expect(lowConfCard.locator('text=Around $120,000 annually.')).toBeVisible({ timeout: 5000 });
@@ -104,11 +106,13 @@ test.describe('Safety & Confidence Gating (D16 & D17)', () => {
 
     await sidepanel.bringToFront();
 
-    const salaryCard = sidepanel.locator('li', { hasText: 'What are your salary expectations?' });
+    const salaryCard = sidepanel.locator('[data-testid="question-card"]', {
+      hasText: 'What are your salary expectations?',
+    });
     await expect(salaryCard).toBeVisible({ timeout: 7000 });
 
     // Click Suggest on sensitive question
-    await salaryCard.locator('button', { hasText: 'Suggest' }).click();
+    await salaryCard.locator('[data-testid="suggest-btn"]').click();
 
     // Verify sensitive confirm card UI renders
     await expect(salaryCard.locator('text=Always-confirm — sensitive field')).toBeVisible({ timeout: 5000 });

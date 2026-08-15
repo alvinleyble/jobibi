@@ -22,13 +22,13 @@ test.describe('Extraction & Sidepanel Display', () => {
     await ext.close();
   });
 
-  test('JobStreet: extracts employer questions and displays in sidepanel with confidence badges', async () => {
+  test('JobStreet: extracts employer questions and displays in sidepanel with match quality dots', async () => {
     const sidepanel = await openSidepanel(ext.context, ext.extensionId);
     await seedSession(sidepanel, { isBetaTester: true });
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    await expect(sidepanel.locator('text=Signed in as beta-tester@example.com')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('[data-testid="avatar-btn"]')).toBeVisible({ timeout: 5000 });
 
     // Open JobStreet application page
     const atsPage = await ext.context.newPage();
@@ -41,10 +41,10 @@ test.describe('Extraction & Sidepanel Display', () => {
     await expect(sidepanel.locator('text=Describe your experience with TypeScript and React')).toBeVisible();
     await expect(sidepanel.locator('text=What are your salary expectations?')).toBeVisible();
 
-    // Verify confidence badges
-    await expect(sidepanel.locator('text=high · 1.00')).toBeVisible();
-    await expect(sidepanel.locator('text=medium · 0.85')).toBeVisible();
-    await expect(sidepanel.locator('text=low · 0.50')).toBeVisible();
+    // Verify match quality dot indicators
+    await expect(sidepanel.locator('span[title="High match quality"]')).toBeVisible();
+    await expect(sidepanel.locator('span[title="Medium match quality"]')).toBeVisible();
+    await expect(sidepanel.locator('span[title="Low match quality"]')).toBeVisible();
   });
 
   test('Indeed: extracts SmartApply questions module and displays in sidepanel', async () => {
@@ -53,7 +53,7 @@ test.describe('Extraction & Sidepanel Display', () => {
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    await expect(sidepanel.locator('text=Signed in as beta-tester@example.com')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('[data-testid="avatar-btn"]')).toBeVisible({ timeout: 5000 });
 
     const atsPage = await ext.context.newPage();
     const url = getAtsUrl('indeed', server.port);
@@ -71,7 +71,7 @@ test.describe('Extraction & Sidepanel Display', () => {
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    await expect(sidepanel.locator('text=Signed in as beta-tester@example.com')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('[data-testid="avatar-btn"]')).toBeVisible({ timeout: 5000 });
 
     const atsPage = await ext.context.newPage();
     const url = getAtsUrl('linkedin', server.port);
@@ -89,7 +89,7 @@ test.describe('Extraction & Sidepanel Display', () => {
     await sidepanel.reload();
     await sidepanel.waitForLoadState('domcontentloaded');
 
-    await expect(sidepanel.locator('text=Signed in as beta-tester@example.com')).toBeVisible({ timeout: 5000 });
+    await expect(sidepanel.locator('[data-testid="avatar-btn"]')).toBeVisible({ timeout: 5000 });
 
     const atsPage = await ext.context.newPage();
     const url = getAtsUrl('generic', server.port);

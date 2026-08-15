@@ -1,51 +1,19 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import type { ExtractionResult, ExtractedQuestion } from '@jobibi/shared';
+import type { ExtractionResult } from '@jobibi/shared';
 import { SuggestCard } from './SuggestCard';
 import { supabase } from './supabase';
 import { humanizeErrorMessage } from './ingestError';
 
-function confidenceLabel(c: number): string {
-  if (c >= 0.95) return 'high';
-  if (c >= 0.75) return 'medium';
-  if (c >= 0.5) return 'low';
-  return 'unknown';
+function getMatchDotClass(confidence: number): string {
+  if (confidence >= 0.95) return 'bg-success';
+  if (confidence >= 0.75) return 'bg-warn';
+  return 'bg-danger';
 }
 
-function confidenceClass(c: number): string {
-  if (c >= 0.95) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  if (c >= 0.75) return 'bg-amber-50 text-amber-700 border-amber-200';
-  return 'bg-slate-50 text-slate-600 border-slate-200';
-}
-
-function QuestionRow({
-  q,
-  jobContext,
-  onDraftAvailable,
-  isBetaTester,
-}: {
-  q: ExtractedQuestion;
-  jobContext: ExtractionResult['jobContext'];
-  onDraftAvailable: (id: string, draft: string | null) => void;
-  isBetaTester?: boolean;
-}) {
-  return (
-    <li className="flex flex-col gap-1 rounded border border-slate-200 p-2">
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-xs font-medium text-slate-800">{q.label}</span>
-        <span
-          className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium ${confidenceClass(q.confidence)}`}
-          title={`Mapping via ${q.labelSource} — selector ${q.field.selector}`}
-        >
-          {confidenceLabel(q.confidence)} · {q.confidence.toFixed(2)}
-        </span>
-      </div>
-
-      {q.context && q.context !== q.label ? (
-        <span className="text-[10px] italic text-slate-400">Context: {q.context}</span>
-      ) : null}
-      <SuggestCard q={q} jobContext={jobContext} onDraftAvailable={onDraftAvailable} isBetaTester={isBetaTester} />
-    </li>
-  );
+function getMatchDotTitle(confidence: number): string {
+  if (confidence >= 0.95) return 'High match quality';
+  if (confidence >= 0.75) return 'Medium match quality';
+  return 'Low match quality';
 }
 
 function isValidWebTab(t: { url?: string }): boolean {
@@ -98,8 +66,6 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
     } else {
       draftMapRef.current.delete(id);
     }
-    // propagate to content script for capture origin diff (D13/D16)
-    // find active tab and send
     (async () => {
       try {
         const tab = await getTargetTab();
@@ -128,7 +94,6 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
           setNoListenerYet(false);
         } else if (t === 'JOBIBI_EXTRACTION_FAILURE') {
           const payload = (message as { payload: { adapter: string; host: string; url: string; detected_fields: number; extracted_questions: number; failure_reason: string } }).payload;
-          // S7 extraction-failure telemetry: write under caller's JWT (mirrors gate_decisions pattern)
           void (async () => {
             try {
               const {
@@ -158,9 +123,7 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
             url?: string;
             host?: string;
           }}).payload;
-          // enrich draftText from our map if content script didn't have it (race)
           const enrichedAnswers = payload.answers.map((a) => {
-            // try to find id by label lookup in current result
             const qMatch = resultRef.current?.questions.find((q) => q.label === a.questionLabel);
             if (qMatch && !a.draftText) {
               const fromMap = draftMapRef.current.get(qMatch.id);
@@ -256,10 +219,7 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
         const isApplyPage = /jobstreet|seek|jobsdb/i.test(url) && /apply/i.test(url);
         const isLinkedIn = /linkedin/i.test(url);
         const isIndeed = /indeed/i.test(url);
-        // Dedicated apply pages have strict scoping; LinkedIn/Indeed/generic are broader.
-        // For JobStreet we keep the previous apply-only gate; others try immediately.
         if (!isSupportedHost) {
-          // Unknown host — try generic fallback
           if (tabId != null) {
             const resp = (await browser.tabs
               .sendMessage(tabId, { type: 'JOBIBI_REQUEST_QUESTIONS' })
@@ -309,10 +269,8 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
       }
     };
 
-    // Prime from whatever tab is active now.
     void requestFromActiveTab();
 
-    // Re-query when the user switches tabs or navigates.
     const onActivated = () => {
       void requestFromActiveTab();
     };
@@ -330,54 +288,69 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
   }, []);
 
   const questions = result?.questions ?? [];
-  const isJobStreet = result
-    ? /jobstreet|seek|jobsdb/i.test(result.host)
-    : noListenerYet === false
-      ? false
-      : false;
 
   return (
-    <div className="flex w-full max-w-md flex-col gap-2 rounded border border-slate-200 p-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900">Application questions</h2>
-        {result?.jobContext?.roleTitle ? (
-          <span className="text-[10px] text-slate-500">
-            {result.jobContext.roleTitle}
-            {result.jobContext.company ? ` · ${result.jobContext.company}` : ''}
+    <div data-screen-label="Suggest" className="flex flex-col gap-3">
+      {/* Pinned Job-Context Banner */}
+      {result?.jobContext?.roleTitle || result?.jobContext?.company ? (
+        <div className="flex items-center gap-1.5 rounded-[10px] border border-accent-tint-border bg-accent-tint px-3.5 py-2.5 text-[12.5px]">
+          <span className="font-bold text-accent">
+            {result.jobContext.roleTitle || 'Job Application'}
           </span>
-        ) : null}
-      </div>
-
-      {captureMsg ? <p className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{captureMsg}</p> : null}
-
-      {questions.length === 0 ? (
-        <p className="text-xs text-slate-500">
-          {result
-            ? `No questions detected on this page${result.host ? ` · ${result.host}` : ''}${result.adapter ? ` (${result.adapter})` : ''}.`
-            : noListenerYet
-              ? 'Open a supported application (JobStreet, LinkedIn Easy Apply, Indeed) to see its questions here.'
-              : 'Waiting for application…'}
-        </p>
-      ) : (
-        <>
-          <p className="text-[11px] text-slate-500">
-            {questions.length} question{questions.length === 1 ? '' : 's'} detected
-            {result?.host ? ` · ${result.host}` : ''}
-            {result?.adapter ? ` · ${result.adapter}` : ''}
-            {result?.jobContext?.jobDescription ? ' · JD captured' : ''}
-          </p>
-          <ul className="flex flex-col gap-1.5">
-            {questions.map((q) => (
-              <QuestionRow key={q.id} q={q} jobContext={result?.jobContext ?? {}} onDraftAvailable={handleDraftAvailable} isBetaTester={isBetaTester} />
-            ))}
-          </ul>
-        </>
-      )}
-
-      {/* Always show host for debugging, even when not JobStreet */}
-      {result?.host && !isJobStreet ? (
-        <p className="text-[10px] text-slate-400">Host: {result.host}</p>
+          {result.jobContext.company ? (
+            <span className="text-ink-secondary">· {result.jobContext.company}</span>
+          ) : null}
+        </div>
       ) : null}
+
+      {/* Capture Toast Banner */}
+      {captureMsg ? (
+        <div className="rounded-lg border border-success-tint-border bg-success-tint px-3 py-2 text-xs font-medium text-success">
+          {captureMsg}
+        </div>
+      ) : null}
+
+      {/* Questions list or empty state */}
+      {questions.length === 0 ? (
+        <div className="rounded-[10px] border border-card-border bg-card p-4 text-center">
+          <p className="text-xs text-ink-muted leading-relaxed">
+            {result
+              ? `No questions detected on this page${result.host ? ` · ${result.host}` : ''}.`
+              : noListenerYet
+                ? 'Open a supported application (JobStreet, LinkedIn Easy Apply, Indeed) to see its questions here.'
+                : 'Waiting for application…'}
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {questions.map((q) => (
+            <div
+              key={q.id}
+              data-testid="question-card"
+              data-question-label={q.label}
+              className="flex flex-col gap-2 rounded-[10px] border border-card-border bg-card p-3.5 text-left"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[14.5px] font-bold text-ink leading-[1.35]">{q.label}</span>
+                <span
+                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${getMatchDotClass(q.confidence)}`}
+                  title={getMatchDotTitle(q.confidence)}
+                  data-testid={`match-dot-${q.id}`}
+                />
+              </div>
+              {q.context && q.context !== q.label ? (
+                <span className="text-[11px] italic text-ink-muted">Context: {q.context}</span>
+              ) : null}
+              <SuggestCard
+                q={q}
+                jobContext={result?.jobContext ?? {}}
+                onDraftAvailable={handleDraftAvailable}
+                isBetaTester={isBetaTester}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

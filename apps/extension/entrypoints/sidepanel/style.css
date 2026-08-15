@@ -1,1 +1,136 @@
 @import 'tailwindcss';
+
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/nunito-latin-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/nunito-latin-700.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/fonts/nunito-latin-800.woff2') format('woff2');
+}
+
+:root {
+  --bg-panel: #FCFAF7;
+  --bg-card: #FFFFFF;
+  --border-card: #EDE6DA;
+  --bg-track: #F6F1E9;
+  --bg-subtle: #FBF9F6;
+  --bg-recess: #F1ECE0;
+  --border-dash: #D8CBB0;
+  --bg-dash: #FBF8F3;
+  --text-main: #2B2621;
+  --text-secondary: #6B6255;
+  --text-muted: #9A9184;
+  --text-disabled: #B3A99A;
+  --accent: #5B7DB1;
+  --accent-tint: #EAF0F7;
+  --accent-tint-border: #DCE6F0;
+  --success: #4C8F6B;
+  --success-tint: #E9F3ED;
+  --success-tint-border: #D3E8DC;
+  --warning: #A98A4A;
+  --danger: #B06A56;
+  --danger-tint: #F7EAE5;
+  --danger-tint-border: #ECD3C9;
+  --info: #8A6BAA;
+  --info-tint: #F1ECF6;
+  --info-tint-border: #E1D5EC;
+  --on-accent: #FFFFFF;
+  --modal-overlay: rgba(43, 38, 33, 0.55);
+  --delete-text: #B08D7A;
+  --loading-bg: #C9D6E4;
+  --loading-text: #FFFFFF;
+  --card-shadow: 0 4px 18px rgba(43, 38, 33, 0.10);
+  --modal-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+}
+
+.dark, [data-theme="dark"] {
+  --bg-panel: #211C17;
+  --bg-card: #2A2420;
+  --border-card: #3D362E;
+  --bg-track: #171310;
+  --bg-subtle: #241F1B;
+  --bg-recess: #3A342C;
+  --border-dash: #4A4038;
+  --bg-dash: #241F1B;
+  --text-main: #F2ECE3;
+  --text-secondary: #C7BCAE;
+  --text-muted: #8F8375;
+  --text-disabled: #6B6255;
+  --accent: #82A4D4;
+  --accent-tint: #26344A;
+  --accent-tint-border: #3A4E6C;
+  --success: #7CC29B;
+  --success-tint: #1F3327;
+  --success-tint-border: #325240;
+  --warning: #D9B472;
+  --danger: #DE9884;
+  --danger-tint: #3A241E;
+  --danger-tint-border: #553427;
+  --info: #B79BD9;
+  --info-tint: #332948;
+  --info-tint-border: #4A3B68;
+  --on-accent: #1A1512;
+  --modal-overlay: rgba(0, 0, 0, 0.65);
+  --delete-text: #C99A85;
+  --loading-bg: #3A4457;
+  --loading-text: #8C9BB8;
+  --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+  --modal-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+@theme {
+  --font-sans: 'Nunito', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --color-panel: var(--bg-panel);
+  --color-card: var(--bg-card);
+  --color-card-border: var(--border-card);
+  --color-track: var(--bg-track);
+  --color-subtle: var(--bg-subtle);
+  --color-recess: var(--bg-recess);
+  --color-dash: var(--border-dash);
+  --color-dash-bg: var(--bg-dash);
+  --color-ink: var(--text-main);
+  --color-ink-secondary: var(--text-secondary);
+  --color-ink-muted: var(--text-muted);
+  --color-ink-disabled: var(--text-disabled);
+  --color-accent: var(--accent);
+  --color-accent-tint: var(--accent-tint);
+  --color-accent-tint-border: var(--accent-tint-border);
+  --color-success: var(--success);
+  --color-success-tint: var(--success-tint);
+  --color-success-tint-border: var(--success-tint-border);
+  --color-warn: var(--warning);
+  --color-danger: var(--danger);
+  --color-danger-tint: var(--danger-tint);
+  --color-danger-tint-border: var(--danger-tint-border);
+  --color-info: var(--info);
+  --color-info-tint: var(--info-tint);
+  --color-info-tint-border: var(--info-tint-border);
+  --color-on-accent: var(--on-accent);
+  --color-delete-text: var(--delete-text);
+  --color-loading-bg: var(--loading-bg);
+  --color-loading-text: var(--loading-text);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-panel);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+}

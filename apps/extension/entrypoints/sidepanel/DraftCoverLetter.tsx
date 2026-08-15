@@ -15,7 +15,7 @@ interface AcceptedDraft {
   chunkCount: number;
 }
 
-function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
+export function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
   const [jobDescription, setJobDescription] = useState('');
   const [draft, setDraft] = useState<string | null>(null);
   const [originalDraft, setOriginalDraft] = useState<string | null>(null);
@@ -50,8 +50,6 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
       setDraft(text);
       setOriginalDraft(text);
       setEditedDraft(text);
-      // S8 item 6: job description is ephemeral — discard it once a draft is
-      // generated, whether later accepted or not. Keep the textarea cleared.
       setJobDescription('');
     } catch (e) {
       setError(humanizeErrorMessage(e instanceof Error ? e.message : String(e)));
@@ -61,7 +59,6 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
   };
 
   const handleDiscard = () => {
-    // S8 item 3: discard = nothing stored (mirrors refuse outcome)
     setDraft(null);
     setOriginalDraft(null);
     setEditedDraft('');
@@ -78,19 +75,10 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
       setError('Cover letter cannot be empty. Please write or edit your cover letter before accepting.');
       return;
     }
-    // D13 origin: any edit → user_edited (feeds voice profile);
-    // zero changes → accepted_verbatim (must NEVER feed voice profile).
     const { origin } = deriveOrigin(originalDraft ?? '', textToStore);
 
     setSaving(true);
     try {
-      // S8 item 3: store through the existing paste-ingestion path as an
-      // ordinary documents row of kind cover_letter (identical to a manually
-      // pasted cover letter). The ingest function validates via
-      // PASTE_ALLOWED_KINDS and chunks/embeds into memory_chunks.
-      // D13: origin distinguishes user_edited (feeds voice profile) vs
-      // accepted_verbatim (must NEVER feed voice profile) — persisted on the
-      // documents row via the ingest origin param.
       const { data, error: ingestError } = await supabase.functions.invoke<{ documentId: string; chunkCount: number }>(
         'ingest',
         { body: { text: textToStore, kind: 'cover_letter', origin } },
@@ -142,28 +130,28 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
   const isAccepted = acceptedDraft !== null;
 
   return (
-    <div className="flex flex-col gap-2 rounded border border-slate-200 p-3">
-      <h2 className="text-sm font-semibold text-slate-900">Draft Cover Letter</h2>
-      <p className="text-xs text-slate-500">
-        Paste a job description — Jobibi drafts a cover letter from your own history. You can edit before accepting.
+    <div className="flex flex-col gap-2 rounded-[10px] border border-card-border bg-card p-3.5">
+      <h3 className="text-[13.5px] font-bold text-ink">Draft a cover letter</h3>
+      <p className="text-[12px] text-ink-muted">
+        Paste a job description — Jobibi drafts one from your history.
       </p>
 
       {isAccepted ? (
         <div
           data-testid="accepted-cover-letter-card"
-          className="flex flex-col gap-2 rounded border border-emerald-300 bg-emerald-50/60 p-3 text-xs text-slate-800"
+          className="flex flex-col gap-2 rounded-lg border border-success-tint-border bg-success-tint p-3 text-xs text-ink"
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-semibold text-emerald-800">
-              <span className="text-emerald-600">✓</span>
-              <span>Saved to Memory Bank</span>
+            <div className="flex items-center gap-1.5 font-bold text-success">
+              <span>✓</span>
+              <span>Saved to Memory</span>
             </div>
-            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-mono text-emerald-800">
+            <span className="rounded bg-card px-1.5 py-0.5 text-[10px] font-bold text-success border border-success-tint-border">
               {acceptedDraft.origin} · {acceptedDraft.chunkCount} chunk{acceptedDraft.chunkCount === 1 ? '' : 's'}
             </span>
           </div>
 
-          <div className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded border border-emerald-200/80 bg-white/80 p-2.5 text-xs text-slate-700 leading-relaxed">
+          <div className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded-md border border-card-border bg-card p-2.5 text-[12.5px] text-ink leading-relaxed">
             {acceptedDraft.text}
           </div>
 
@@ -172,7 +160,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
               type="button"
               onClick={() => void handleCopy()}
               data-testid="copy-cover-letter-btn"
-              className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800 transition-colors"
+              className="rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-on-accent hover:opacity-90 transition-opacity"
             >
               {copied ? 'Copied ✓' : 'Copy cover letter'}
             </button>
@@ -180,7 +168,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
               type="button"
               onClick={handleDraftAgain}
               data-testid="draft-again-btn"
-              className="rounded border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-emerald-50 transition-colors"
+              className="rounded-lg border border-card-border bg-card px-3 py-1.5 text-xs font-bold text-ink hover:bg-subtle transition-colors"
             >
               Draft Again
             </button>
@@ -189,7 +177,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
       ) : !hasDraft ? (
         <div className="flex flex-col gap-2">
           <textarea
-            className="min-h-24 rounded border border-slate-200 p-2 text-xs text-slate-600"
+            className="min-h-24 w-full rounded-lg border border-card-border bg-card p-2 text-xs text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none"
             placeholder="Paste the job description here…"
             value={jobDescription}
             onChange={(e) => setJobDescription(e.target.value)}
@@ -197,7 +185,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
           />
           <button
             type="button"
-            className="self-start rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+            className="self-start rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-on-accent hover:opacity-90 disabled:opacity-50 transition-opacity"
             disabled={generating || saving || jobDescription.trim().length < MIN_JD_CHARS}
             onClick={() => void handleGenerate()}
           >
@@ -207,7 +195,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
       ) : (
         <div className="flex flex-col gap-2">
           <textarea
-            className="min-h-40 rounded border border-slate-200 p-2 text-xs text-slate-700"
+            className="min-h-40 w-full rounded-lg border border-card-border bg-card p-2 text-xs text-ink leading-relaxed focus:border-accent focus:outline-none"
             value={editedDraft}
             onChange={(e) => setEditedDraft(e.target.value)}
             disabled={saving || generating}
@@ -215,7 +203,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
           <div className="flex gap-2">
             <button
               type="button"
-              className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              className="rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-on-accent hover:opacity-90 disabled:opacity-50 transition-opacity"
               disabled={saving || generating || editedDraft.trim().length === 0}
               onClick={() => void handleAccept()}
             >
@@ -223,7 +211,7 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
             </button>
             <button
               type="button"
-              className="rounded border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-50"
+              className="rounded-lg border border-card-border bg-card px-3 py-1.5 text-xs font-bold text-ink hover:bg-subtle disabled:opacity-50 transition-colors"
               disabled={saving || generating}
               onClick={handleDiscard}
             >
@@ -233,8 +221,8 @@ function DraftCoverLetter({ onStored }: DraftCoverLetterProps) {
         </div>
       )}
 
-      {error && <p className="text-xs text-red-600">{error}</p>}
-      {success && <p className="text-xs text-emerald-600">{success}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
+      {success && <p className="text-xs text-success">{success}</p>}
     </div>
   );
 }

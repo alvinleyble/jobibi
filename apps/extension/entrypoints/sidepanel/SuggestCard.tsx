@@ -48,8 +48,6 @@ type SuggestErrorBody = {
   sensitiveFact?: { id: string; kind: string; value: string; stated_at: string; confirmed_at: string | null; provenanceLine: string } | null;
 };
 
-// Response bodies can only be read once — parse it a single time and derive
-// both the sensitive-rejection check and the display message from the result.
 async function readSuggestErrorBody(err: unknown): Promise<SuggestErrorBody | null> {
   if (err && typeof err === 'object' && 'context' in err) {
     const ctx = (err as { context?: { json: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } } }).context;
@@ -92,26 +90,36 @@ export function SuggestCard({
   isBetaTester?: boolean;
 }) {
   const [state, setState] = useState<SuggestState>({});
+  const [reasoningOpen, setReasoningOpen] = useState(false);
   const [gapInput, setGapInput] = useState('');
   const [gapLoading, setGapLoading] = useState(false);
   const [gapError, setGapError] = useState<string | null>(null);
+
   // S7A manual input on refuse (cold raw-text, user-written)
   const [manualInput, setManualInput] = useState('');
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualSuccess, setManualSuccess] = useState<string | null>(null);
+
   // S11 beta auto-fill
   const [inserting, setInserting] = useState(false);
   const [inserted, setInserted] = useState(false);
   const [insertError, setInsertError] = useState<string | null>(null);
+  const [lockedProNotice, setLockedProNotice] = useState<string | null>(null);
+
+  // Sensitive confirm / update state
+  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [confirmDone, setConfirmDone] = useState<string | null>(null);
+  const [updateValue, setUpdateValue] = useState('');
+  const [showUpdate, setShowUpdate] = useState(false);
 
   // Notify parent (JobStreetQuestions) when a draft is available for capture mapping (D13)
   useEffect(() => {
     if (state.outcome === 'draft' && state.answer && onDraftAvailable) {
       onDraftAvailable(q.id, state.answer);
     } else if ((state.outcome === 'refuse' || state.outcome === 'ask' || !state.outcome) && onDraftAvailable) {
-      // clear draft when not in draft outcome
-      // keep prior draft? For capture, only current draft matters
+      onDraftAvailable(q.id, null);
     }
   }, [state.outcome, state.answer, q.id, onDraftAvailable]);
 
@@ -127,6 +135,7 @@ export function SuggestCard({
     setShowUpdate(false);
     setInsertError(null);
     setInserted(false);
+    setLockedProNotice(null);
     try {
       const { data, error } = await supabase.functions.invoke('suggest', {
         body: {
@@ -161,7 +170,6 @@ export function SuggestCard({
         videoTalkingPoints: data.videoTalkingPoints,
         videoScript: data.videoScript,
       });
-      // propagate draft to content script for capture origin diff (D13)
       if (data.outcome === 'draft' && data.answer && onDraftAvailable) {
         onDraftAvailable(q.id, data.answer as string);
       } else if (onDraftAvailable) {
@@ -172,7 +180,6 @@ export function SuggestCard({
     }
   };
 
-  // helper to detect sensitive rejection from an already-parsed error body and route to confirm card
   function tryHandleSensitiveRejection(body: SuggestErrorBody | null): boolean {
     if (body?.code === 'sensitive_rejected') {
       setState((prev) => ({
@@ -242,12 +249,6 @@ export function SuggestCard({
     }
   };
 
-  const [confirmLoading, setConfirmLoading] = useState(false);
-  const [confirmError, setConfirmError] = useState<string | null>(null);
-  const [confirmDone, setConfirmDone] = useState<string | null>(null);
-  const [updateValue, setUpdateValue] = useState('');
-  const [showUpdate, setShowUpdate] = useState(false);
-
   const onConfirm = async () => {
     if (!state.sensitiveKind) return;
     setConfirmLoading(true);
@@ -264,7 +265,6 @@ export function SuggestCard({
         return;
       }
       setConfirmDone('Confirmed — updated timestamp.');
-      // Refresh local fact with returned data
       if (data?.value) {
         setState((prev) => ({
           ...prev,
@@ -287,7 +287,7 @@ export function SuggestCard({
       return;
     }
     if (!state.sensitiveKind) {
-      setConfirmError('We couldn\'t verify this field right now. Please try clicking Suggest again.');
+      setConfirmError("We couldn't verify this field right now. Please try clicking Suggest again.");
       return;
     }
     setConfirmLoading(true);
@@ -319,7 +319,6 @@ export function SuggestCard({
     }
   };
 
-  // S7A manual input on refuse — cold raw-text capture, user-written, guaranteed memory
   const onManualSubmit = async () => {
     const trimmed = manualInput.trim();
     if (!trimmed) {
@@ -357,7 +356,6 @@ export function SuggestCard({
       }
       setManualSuccess('Saved to your memory bank.');
       setManualInput('');
-      // Optionally trigger seen-before refresh on next Suggest: keep question as dirty
       void data;
     } catch (e) {
       setManualError(getErrorMessage(e));
@@ -368,6 +366,11 @@ export function SuggestCard({
 
   const copy = async (text: string) => {
     await navigator.clipboard.writeText(text);
+  };
+
+  const handleLockedInsertClick = () => {
+    setLockedProNotice('1-Click Auto-Fill is a Pro feature (Included in Beta). Upgrade to insert answers directly.');
+    setTimeout(() => setLockedProNotice(null), 4000);
   };
 
   const onInsert = async (text: string) => {
@@ -431,81 +434,105 @@ export function SuggestCard({
   const seen = state.seenBefore;
 
   return (
-    <div className="mt-1 flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={onSuggest}
-        disabled={state.loading || gapLoading}
-        className="self-start rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
-      >
-        {state.loading ? 'Thinking…' : state.outcome ? 'Regenerate' : 'Suggest'}
-      </button>
-      {state.error ? <p className="text-xs text-red-600">{state.error}</p> : null}
+    <div className="mt-1 flex flex-col gap-2">
+      {/* Primary Suggest / Regenerate Button */}
+      {!state.outcome && !state.loading ? (
+        <button
+          type="button"
+          onClick={onSuggest}
+          disabled={state.loading || gapLoading}
+          data-testid="suggest-btn"
+          className="self-start rounded-lg bg-accent px-3.5 py-[9px] text-[13.5px] font-bold text-on-accent hover:opacity-90 transition-opacity"
+        >
+          Suggest an answer
+        </button>
+      ) : state.loading ? (
+        <button
+          type="button"
+          disabled
+          data-testid="suggest-btn"
+          className="self-start rounded-lg bg-loading-bg px-3.5 py-[9px] text-[13.5px] font-bold text-loading-text cursor-not-allowed"
+        >
+          Thinking…
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onSuggest}
+          disabled={state.loading || gapLoading}
+          data-testid="suggest-btn"
+          className="self-start rounded-lg bg-accent px-3.5 py-[9px] text-[13.5px] font-bold text-on-accent hover:opacity-90 transition-opacity"
+        >
+          Regenerate
+        </button>
+      )}
 
-      {/* Seen-before surfacing (S6 D12) — shown for any outcome, both options always offered */}
+      {state.error ? <p className="text-xs text-danger">{state.error}</p> : null}
+
+      {/* S6 Seen-Before Card */}
       {seen ? (
-        <div className={`rounded border p-2 ${seen.defaultIsPrior ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-slate-50'}`}>
+        <div className="rounded-lg border border-accent-tint-border bg-accent-tint/60 p-3 text-left">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-blue-800">Seen before — {seen.sourceLabel}</p>
-            <span className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-600 border">origin: {seen.origin} · sim {seen.similarity.toFixed(2)}</span>
-          </div>
-          <p className="mt-1 text-[10px] italic text-slate-500">Prior: “{seen.questionLabel}”</p>
-          <p className="mt-1 whitespace-pre-wrap text-xs text-slate-800">{seen.answerText}</p>
-          <div className="mt-2 flex gap-2">
-            <button type="button" onClick={() => copy(seen.answerText)} className="rounded border border-blue-300 bg-white px-2 py-1 text-xs">
-              Copy prior answer
-            </button>
-            <span className="self-center text-[10px] text-slate-500">
-              {seen.defaultIsPrior ? 'Prior is default (same role family)' : 'Fresh draft is default (different role) — prior offered as alternative'}
+            <p className="text-xs font-bold text-accent">Seen before — {seen.sourceLabel}</p>
+            <span className="rounded bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink-muted border border-card-border">
+              {seen.origin}
             </span>
           </div>
-          {!seen.defaultIsPrior && state.outcome !== 'draft' ? (
-            <p className="mt-1 text-[10px] text-slate-500">A fresh draft is also available below; both are offered.</p>
-          ) : null}
-          {seen.defaultIsPrior && state.outcome === 'draft' ? (
-            <p className="mt-1 text-[10px] text-slate-500">Fresh draft also below — choose either.</p>
-          ) : null}
+          <p className="mt-1 text-[11px] italic text-ink-muted">Prior: “{seen.questionLabel}”</p>
+          <p className="mt-1 whitespace-pre-wrap text-xs text-ink">{seen.answerText}</p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => copy(seen.answerText)}
+              className="rounded-lg border border-card-border bg-card px-3 py-1.5 text-xs font-bold text-ink hover:bg-subtle"
+            >
+              Copy prior answer
+            </button>
+          </div>
         </div>
       ) : null}
 
+      {/* Outcome: Refuse Card (Amber) */}
       {state.outcome === 'refuse' ? (
-        <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-          <p className="font-medium">Not enough in your history to draft this.</p>
-          <p>{state.refuseMessage}</p>
-          <p className="mt-1 text-[10px] text-amber-700">
-            q:{state.questionMatch?.toFixed(2)} r:{state.roleMatch?.toFixed(2)}
-          </p>
-          {/* S7A manual input on refuse — cold raw-text, guarantees memory when capture is least trustworthy */}
-          <div className="mt-2 rounded border border-amber-200 bg-white p-2">
-            <p className="text-xs font-medium text-slate-800">Provide input</p>
-            <p className="mt-1 text-[10px] text-slate-500">Your answer will be saved to your memory bank (user-written) and used for future drafts.</p>
+        <div className="rounded-lg border border-warn/30 bg-warn/10 p-3 text-xs text-ink">
+          <p className="font-bold text-warn">Not enough in your history to draft this.</p>
+          <p className="mt-1 text-ink-secondary">{state.refuseMessage}</p>
+
+          {/* S7A manual input on refuse */}
+          <div className="mt-2.5 rounded-lg border border-card-border bg-card p-3">
+            <p className="text-xs font-bold text-ink">Provide input</p>
+            <p className="mt-0.5 text-[11px] text-ink-muted">
+              Your answer will be saved to your memory bank (user-written) and used for future drafts.
+            </p>
             <textarea
               value={manualInput}
               onChange={(e) => setManualInput(e.target.value)}
               placeholder="Your answer…"
               rows={3}
-              className="mt-2 w-full rounded border border-slate-300 bg-white p-1.5 text-xs text-slate-800 placeholder:text-slate-400"
+              className="mt-2 w-full rounded-lg border border-card-border bg-card p-2 text-xs text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none"
               disabled={manualLoading}
             />
-            {manualError ? <p className="mt-1 text-xs text-red-600">{manualError}</p> : null}
-            {manualSuccess ? <p className="mt-1 text-xs text-emerald-600">{manualSuccess}</p> : null}
+            {manualError ? <p className="mt-1 text-xs text-danger">{manualError}</p> : null}
+            {manualSuccess ? <p className="mt-1 text-xs text-success font-medium">{manualSuccess}</p> : null}
             <button
               type="button"
               onClick={onManualSubmit}
               disabled={manualLoading || !manualInput.trim()}
-              className="mt-2 rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+              className="mt-2 rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-on-accent hover:opacity-90 disabled:opacity-50 transition-opacity"
             >
               {manualLoading ? 'Saving…' : 'Save to memory'}
             </button>
           </div>
         </div>
       ) : null}
+
+      {/* Outcome: Ask Card (Follow-up gap question) */}
       {state.outcome === 'ask' ? (
-        <div className="rounded border border-sky-200 bg-sky-50 p-2">
-          <p className="text-xs font-medium text-sky-800">One quick follow-up — then I’ll draft</p>
-          <p className="mt-1 text-xs text-slate-800">{state.gapQuestion}</p>
+        <div className="rounded-lg border border-accent-tint-border bg-accent-tint p-3 text-xs">
+          <p className="font-bold text-accent">One quick follow-up — then I’ll draft</p>
+          <p className="mt-1 text-ink">{state.gapQuestion}</p>
           {state.anchoredChunkText ? (
-            <p className="mt-1 text-[10px] italic text-slate-500" title={state.anchoredChunkText}>
+            <p className="mt-1 text-[11px] italic text-ink-muted" title={state.anchoredChunkText}>
               Anchored to: “{state.anchoredChunkText.slice(0, 100)}…”
             </p>
           ) : null}
@@ -514,41 +541,38 @@ export function SuggestCard({
             onChange={(e) => setGapInput(e.target.value)}
             placeholder="Your short answer…"
             rows={3}
-            className="mt-2 w-full rounded border border-slate-300 bg-white p-1.5 text-xs text-slate-800 placeholder:text-slate-400"
+            className="mt-2 w-full rounded-lg border border-card-border bg-card p-2 text-xs text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none"
             disabled={gapLoading}
           />
-          {gapError ? <p className="mt-1 text-xs text-red-600">{gapError}</p> : null}
+          {gapError ? <p className="mt-1 text-xs text-danger">{gapError}</p> : null}
           <button
             type="button"
             onClick={onSubmitGap}
             disabled={gapLoading || !gapInput.trim()}
-            className="mt-2 rounded bg-sky-700 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+            className="mt-2 rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-on-accent hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             {gapLoading ? 'Saving…' : 'Submit & draft'}
           </button>
-          <p className="mt-1 text-[10px] text-slate-400">
+          <p className="mt-1.5 text-[10.5px] text-ink-muted">
             Your answer is saved to your memory bank and used immediately.
-          </p>
-          <p className="mt-1 text-[10px] text-slate-400">
-            q:{state.questionMatch?.toFixed(2)} r:{state.roleMatch?.toFixed(2)}
           </p>
         </div>
       ) : null}
+
+      {/* Outcome: Confirm Card (Always-confirm sensitive field, Violet) */}
       {state.outcome === 'confirm' ? (
-        <div className="rounded border border-violet-200 bg-violet-50 p-2">
-          <p className="text-xs font-medium text-violet-800">Always-confirm — sensitive field</p>
+        <div className="rounded-lg border border-info-tint-border bg-info-tint p-3 text-left">
+          <p className="text-[12px] font-bold text-info">Always-confirm — sensitive field</p>
           {state.sensitiveFact ? (
             <>
-              <p className="mt-1 text-xs text-slate-800">
-                <span className="font-semibold">{state.sensitiveFact.value}</span>
-              </p>
-              <p className="mt-1 text-xs italic text-slate-600">{state.sensitiveFact.provenanceLine}</p>
-              <div className="mt-2 flex gap-2">
+              <p className="mt-1.5 text-[15px] font-extrabold text-ink">{state.sensitiveFact.value}</p>
+              <p className="mt-1 text-[12.5px] italic text-ink-secondary">{state.sensitiveFact.provenanceLine}</p>
+              <div className="mt-2.5 flex items-center gap-2">
                 <button
                   type="button"
                   onClick={onConfirm}
                   disabled={confirmLoading}
-                  className="rounded bg-violet-700 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                  className="rounded-lg bg-info px-3 py-2 text-[13px] font-bold text-on-accent hover:opacity-90 disabled:opacity-50 transition-opacity"
                 >
                   {confirmLoading ? 'Saving…' : 'Confirm still true'}
                 </button>
@@ -556,95 +580,94 @@ export function SuggestCard({
                   type="button"
                   onClick={() => setShowUpdate((v) => !v)}
                   disabled={confirmLoading}
-                  className="rounded border border-violet-300 bg-white px-2 py-1 text-xs disabled:opacity-50"
+                  className="rounded-lg border-[1.5px] border-info-tint-border bg-card px-3 py-2 text-[13px] font-bold text-ink hover:bg-subtle disabled:opacity-50 transition-colors"
                 >
                   Update
                 </button>
               </div>
               {showUpdate ? (
-                <div className="mt-2 flex flex-col gap-1">
+                <div className="mt-2.5 flex flex-col gap-1.5">
                   <input
                     type="text"
                     value={updateValue}
                     onChange={(e) => setUpdateValue(e.target.value)}
                     placeholder={`New ${state.sensitiveKind} value`}
-                    className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+                    className="rounded-lg border border-card-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-accent focus:outline-none"
                     disabled={confirmLoading}
                   />
                   <button
                     type="button"
                     onClick={onUpdate}
                     disabled={confirmLoading || !updateValue.trim()}
-                    className="self-start rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                    className="self-start rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-on-accent hover:opacity-90 disabled:opacity-50"
                   >
                     Save update
                   </button>
                 </div>
               ) : null}
-              {confirmError ? <p className="mt-1 text-xs text-red-600">{confirmError}</p> : null}
-              {confirmDone ? <p className="mt-1 text-xs text-emerald-600">{confirmDone}</p> : null}
-              <p className="mt-2 text-[10px] text-slate-400">This field is never drafted or auto-filled.</p>
+              {confirmError ? <p className="mt-1 text-xs text-danger">{confirmError}</p> : null}
+              {confirmDone ? <p className="mt-1 text-xs text-success font-medium">{confirmDone}</p> : null}
+              <p className="mt-2 text-[10.5px] text-ink-muted">This field is never drafted or auto-filled.</p>
             </>
           ) : !state.sensitiveKind ? (
             <>
-              <p className="mt-1 text-xs text-slate-700">
+              <p className="mt-1 text-xs text-ink-secondary">
                 This looks like a sensitive question, but we couldn&apos;t verify it just now.
               </p>
-              <p className="mt-1 text-xs text-slate-500">Please try Suggest again.</p>
+              <p className="mt-1 text-xs text-ink-muted">Please try clicking Suggest again.</p>
             </>
           ) : (
             <>
-              <p className="mt-1 text-xs text-slate-700">
+              <p className="mt-1 text-xs text-ink-secondary">
                 This looks like a sensitive question ({state.sensitiveKind}), but you haven&apos;t set a value for it yet.
               </p>
-              <p className="mt-1 text-xs text-slate-500">Set it in the Sixty-second intake, then confirm here.</p>
+              <p className="mt-1 text-xs text-ink-muted">Set it in your sensitive facts, then confirm here.</p>
               <div className="mt-2 flex gap-2">
                 <input
                   type="text"
                   value={updateValue}
                   onChange={(e) => setUpdateValue(e.target.value)}
                   placeholder={`New ${state.sensitiveKind} value`}
-                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+                  className="rounded-lg border border-card-border bg-card px-2.5 py-1.5 text-xs text-ink"
                   disabled={confirmLoading}
                 />
                 <button
                   type="button"
                   onClick={onUpdate}
                   disabled={confirmLoading || !updateValue.trim()}
-                  className="rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                  className="rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-on-accent hover:opacity-90 disabled:opacity-50"
                 >
                   Save
                 </button>
               </div>
-              {confirmError ? <p className="mt-1 text-xs text-red-600">{confirmError}</p> : null}
-              {confirmDone ? <p className="mt-1 text-xs text-emerald-600">{confirmDone}</p> : null}
+              {confirmError ? <p className="mt-1 text-xs text-danger">{confirmError}</p> : null}
+              {confirmDone ? <p className="mt-1 text-xs text-success font-medium">{confirmDone}</p> : null}
             </>
           )}
         </div>
       ) : null}
-      {/* Dedicated Video Talking Points & Script Card (S12) */}
+
+      {/* S12 Dedicated Video Talking Points & Script Card */}
       {state.outcome === 'draft' && (state.isVideo || isVideoQuestion(q.label)) ? (
         <div
           data-testid="video-script-card"
-          className="rounded border border-indigo-200 bg-indigo-50/60 p-2.5 text-left"
+          className="rounded-lg border border-accent-tint-border bg-accent-tint/60 p-3 text-left"
         >
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-indigo-900">
-              🎥 Video Talking Points &amp; Script
-            </p>
-            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800 border border-indigo-200">
+            <p className="text-xs font-bold text-accent">🎥 Video Talking Points &amp; Script</p>
+            <span className="rounded bg-card px-1.5 py-0.5 text-[10px] font-bold text-accent border border-accent-tint-border">
               60s Speaking Script
             </span>
           </div>
-          <p className="mt-0.5 text-[10px] text-slate-500">
+          <p className="mt-0.5 text-[11px] text-ink-muted">
             Structured talking points and speaking script grounded in your history.
           </p>
 
-          {/* Talking points / bullet list */}
+          {/* Talking points */}
           {((state.videoTalkingPoints?.length ?? 0) > 0 || (state.skeleton?.length ?? 0) > 0) ? (
-            <div className="mt-2 rounded border border-indigo-100 bg-white p-2">
-              <p className="text-xs font-semibold text-slate-800">Key Talking Points</p>
-              <ul className="mt-1 list-inside list-disc text-xs text-slate-700 space-y-0.5">
+            <div className="mt-2 rounded-lg border border-card-border bg-card p-2.5">
+              <p className="text-xs font-bold text-ink">Key Talking Points</p>
+              <ul className="mt-1 list-inside list-disc text-xs text-ink-secondary space-y-0.5">
                 {(state.videoTalkingPoints || state.skeleton)!.map((point, idx) => (
                   <li key={idx}>{point}</li>
                 ))}
@@ -659,7 +682,7 @@ export function SuggestCard({
                   )
                 }
                 data-testid="copy-talking-points-btn"
-                className="mt-1.5 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                className="mt-2 rounded-lg border border-card-border bg-card px-2.5 py-1 text-xs font-bold text-ink hover:bg-subtle"
               >
                 Copy talking points
               </button>
@@ -667,9 +690,9 @@ export function SuggestCard({
           ) : null}
 
           {/* Speaking Script */}
-          <div className="mt-2 rounded border border-indigo-100 bg-white p-2">
-            <p className="text-xs font-semibold text-slate-800">60-Second Speaking Script</p>
-            <p className="mt-1 text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">
+          <div className="mt-2 rounded-lg border border-card-border bg-card p-2.5">
+            <p className="text-xs font-bold text-ink">60-Second Speaking Script</p>
+            <p className="mt-1 text-xs text-ink whitespace-pre-wrap leading-relaxed">
               {state.videoScript || state.answer}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -677,7 +700,7 @@ export function SuggestCard({
                 type="button"
                 onClick={() => copy(state.videoScript || state.answer || '')}
                 data-testid="copy-video-script-btn"
-                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                className="rounded-lg border border-card-border bg-card px-2.5 py-1 text-xs font-bold text-ink hover:bg-subtle"
               >
                 Copy script
               </button>
@@ -691,45 +714,57 @@ export function SuggestCard({
                       ? 'Auto-fill disabled: Low confidence mapping (< 0.75). Please copy and paste manually.'
                       : undefined
                   }
-                  className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
+                  className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-colors ${
                     inserted
-                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                      ? 'border border-success-tint-border bg-success-tint text-success'
                       : q.confidence < AUTOFILL_CONFIDENCE_THRESHOLD
-                        ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 opacity-60'
-                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50'
+                        ? 'cursor-not-allowed border border-card-border bg-subtle text-ink-disabled opacity-60'
+                        : 'border border-card-border bg-card text-ink hover:bg-subtle disabled:opacity-50'
                   }`}
                 >
                   {inserting ? 'Inserting...' : inserted ? 'Inserted ✓' : 'Insert'}
                 </button>
-              ) : null}
-              {insertError ? <span className="text-[10px] text-red-600">{insertError}</span> : null}
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleLockedInsertClick}
+                  className="rounded-lg border border-card-border bg-card px-2.5 py-1 text-xs font-bold text-ink-muted hover:bg-subtle cursor-pointer flex items-center gap-1"
+                >
+                  <span>Insert</span>
+                  <span className="text-[10px]">🔒 PRO</span>
+                </button>
+              )}
+              {insertError ? <span className="text-[10px] text-danger">{insertError}</span> : null}
             </div>
+            {lockedProNotice ? (
+              <p className="mt-1.5 rounded bg-accent-tint p-1.5 text-[11px] font-medium text-accent">
+                {lockedProNotice}
+              </p>
+            ) : null}
           </div>
 
           {state.sources?.length ? (
-            <p className="mt-2 text-[10px] text-slate-500">
+            <p className="mt-2 text-[10.5px] text-ink-muted">
               Sources: {state.sources.map((s) => s.label).join(', ')}
             </p>
           ) : null}
-          <p className="mt-1 text-[10px] text-slate-400">
-            q:{state.questionMatch?.toFixed(2)} r:{state.roleMatch?.toFixed(2)}
-          </p>
         </div>
       ) : state.outcome === 'draft' ? (
-        <div className={`rounded border p-2 ${seen?.defaultIsPrior ? 'border-slate-200 bg-slate-50' : 'border-emerald-200 bg-emerald-50'}`}>
-          <p className={`text-xs font-medium ${seen?.defaultIsPrior ? 'text-slate-700' : 'text-emerald-800'}`}>
-            {seen?.defaultIsPrior ? 'Fresh draft — tailored for this role (prior was alternative above)' : 'Draft — grounded in your history'}
-            {seen?.defaultIsPrior ? '' : seen ? ' (default — different role from prior)' : ''}
+        /* Standard Draft Outcome Block (Emerald) */
+        <div className="rounded-lg border border-success-tint-border bg-success-tint p-3 text-left">
+          <p className="text-[12px] font-bold text-success">
+            {seen?.defaultIsPrior ? 'Fresh draft — tailored for this role' : 'Draft — grounded in your history'}
           </p>
           {state.gapQuestion ? (
-            <p className="mt-1 text-[10px] italic text-emerald-700">Used your follow-up answer to tailor this draft.</p>
+            <p className="mt-0.5 text-[11px] italic text-success">Used your follow-up answer to tailor this draft.</p>
           ) : null}
-          <p className="mt-1 whitespace-pre-wrap text-xs text-slate-800">{state.answer}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
+          <p className="mt-1.5 text-[13.5px] leading-[1.5] text-ink whitespace-pre-wrap">{state.answer}</p>
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => state.answer && copy(state.answer)}
-              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+              className="rounded-lg bg-accent px-3 py-2 text-[13px] font-bold text-on-accent hover:opacity-90 transition-opacity"
             >
               Copy answer
             </button>
@@ -743,44 +778,60 @@ export function SuggestCard({
                     ? 'Auto-fill disabled: Low confidence mapping (< 0.75). Please copy and paste manually.'
                     : undefined
                 }
-                className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
+                className={`rounded-lg px-3 py-2 text-[13px] font-bold transition-colors ${
                   inserted
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                    ? 'border-[1.5px] border-success-tint-border bg-card text-success'
                     : q.confidence < AUTOFILL_CONFIDENCE_THRESHOLD
-                      ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 opacity-60'
-                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50'
+                      ? 'cursor-not-allowed border border-card-border bg-card text-ink-disabled opacity-60'
+                      : 'border-[1.5px] border-success-tint-border bg-card text-ink hover:bg-subtle disabled:opacity-50'
                 }`}
               >
                 {inserting ? 'Inserting...' : inserted ? 'Inserted ✓' : 'Insert'}
               </button>
-            ) : null}
-            {insertError ? <span className="text-[10px] text-red-600">{insertError}</span> : null}
-          </div>
-          {state.skeleton?.length ? (
-            <div className="mt-2">
-              <p className="text-xs font-medium text-slate-700">Skeleton</p>
-              <ul className="list-inside list-disc text-xs text-slate-600">
-                {state.skeleton.map((b, i) => (
-                  <li key={i}>{b}</li>
-                ))}
-              </ul>
+            ) : (
               <button
                 type="button"
-                onClick={() => copy(state.skeleton!.join('\n- '))}
-                className="mt-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+                onClick={handleLockedInsertClick}
+                className="rounded-lg border border-card-border bg-card px-3 py-2 text-[13px] font-bold text-ink-muted hover:bg-subtle cursor-pointer flex items-center gap-1"
               >
-                Copy skeleton
+                <span>Insert</span>
+                <span className="text-[10px]">🔒 PRO</span>
               </button>
-            </div>
-          ) : null}
-          {state.sources?.length ? (
-            <p className="mt-2 text-[10px] text-slate-500">
-              Sources: {state.sources.map((s) => s.label).join(', ')}
+            )}
+            {insertError ? <span className="text-[10px] text-danger">{insertError}</span> : null}
+          </div>
+
+          {lockedProNotice ? (
+            <p className="mt-2 rounded bg-card p-2 text-[11.5px] font-medium text-accent border border-accent-tint-border">
+              {lockedProNotice}
             </p>
           ) : null}
-          <p className="mt-1 text-[10px] text-slate-400">
-            q:{state.questionMatch?.toFixed(2)} r:{state.roleMatch?.toFixed(2)}
-          </p>
+
+          {/* Collapsible Reasoning Disclosure */}
+          <button
+            type="button"
+            onClick={() => setReasoningOpen((prev) => !prev)}
+            className="mt-2.5 border-none bg-transparent p-0 text-[12px] font-bold text-success underline cursor-pointer"
+          >
+            {reasoningOpen ? 'Hide reasoning' : 'Show reasoning'}
+          </button>
+
+          {reasoningOpen ? (
+            <div className="mt-2 border-t border-dashed border-success-tint-border pt-2">
+              <p className="mb-1 text-[11.5px] font-bold text-success">Built from</p>
+              <ul className="m-0 list-inside list-disc pl-2 text-[12px] text-ink-secondary leading-[1.6]">
+                {state.skeleton?.map((bullet, i) => (
+                  <li key={`skel-${i}`}>{bullet}</li>
+                ))}
+                {state.sources?.map((s, i) => (
+                  <li key={`src-${i}`}>{s.label}</li>
+                ))}
+                {!state.skeleton?.length && !state.sources?.length ? (
+                  <li>Your verified history &amp; uploaded documents</li>
+                ) : null}
+              </ul>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
