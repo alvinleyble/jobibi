@@ -366,15 +366,6 @@ function App() {
             userEmail={session.user.email ?? ''}
             isBetaTester={isBetaTester}
             onOpenUsage={() => setActiveView('usage')}
-            onExportData={handleExportData}
-            exporting={exporting}
-            exportSuccess={exportSuccess}
-            exportError={exportError}
-            onOpenDeleteModal={() => {
-              setShowDeleteModal(true);
-              setDeleteConfirmText('');
-              setDeleteError(null);
-            }}
           />
         )}
       </main>
