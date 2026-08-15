@@ -33,6 +33,49 @@ function App() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Capture toast state across tabs
+  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let toastTimer: number | null = null;
+
+    const showToast = (inserted: number, dropped = 0) => {
+      if (inserted || dropped) {
+        const parts = [`Saved ${inserted} answer${inserted === 1 ? '' : 's'} to memory`];
+        if (dropped) parts.push(`${dropped} mismatched skipped`);
+        setCaptureMsg(parts.join(' · '));
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => setCaptureMsg(null), 4000);
+      }
+    };
+
+    const onMsg = (message: unknown) => {
+      if (typeof message === 'object' && message !== null) {
+        const m = message as { type?: string; payload?: { inserted?: number; droppedMismatched?: number } };
+        if (m.type === 'JOBIBI_CAPTURE_COMPLETED' && m.payload) {
+          showToast(m.payload.inserted ?? 0, m.payload.droppedMismatched ?? 0);
+        }
+      }
+    };
+    browser.runtime.onMessage.addListener(onMsg as Parameters<typeof browser.runtime.onMessage.addListener>[0]);
+
+    const onStorageChanged = (changes: Record<string, unknown>, area: string) => {
+      if (area === 'local' && 'jobibi_last_capture' in changes) {
+        const val = (changes.jobibi_last_capture as { newValue?: { inserted?: number; droppedMismatched?: number } })?.newValue;
+        if (val && typeof val.inserted === 'number') {
+          showToast(val.inserted, val.droppedMismatched ?? 0);
+        }
+      }
+    };
+    browser.storage.onChanged.addListener(onStorageChanged);
+
+    return () => {
+      if (toastTimer) clearTimeout(toastTimer);
+      browser.runtime.onMessage.removeListener(onMsg as Parameters<typeof browser.runtime.onMessage.removeListener>[0]);
+      browser.storage.onChanged.removeListener(onStorageChanged);
+    };
+  }, []);
+
   useEffect(() => {
     if (!session?.user?.id) {
       setIsOnboarded(null);
@@ -338,6 +381,16 @@ function App() {
 
       {/* Main Scrollable Content Area */}
       <main className="flex-1 overflow-y-auto px-4 pb-5">
+        {/* Capture Toast Banner */}
+        {captureMsg ? (
+          <div
+            data-testid="capture-toast"
+            className="mb-3 rounded-lg border border-success-tint-border bg-success-tint px-3 py-2 text-xs font-medium text-success"
+          >
+            {captureMsg}
+          </div>
+        ) : null}
+
         {activeView === 'usage' ? (
           <UsageQuotasView userId={session.user.id} isBetaTester={isBetaTester} />
         ) : activeView === 'account' ? (

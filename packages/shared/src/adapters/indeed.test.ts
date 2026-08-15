@@ -268,4 +268,34 @@ describe('extractIndeedQuestions', () => {
     expect(res.questions).toHaveLength(2);
     expect(res.questions.some((q) => q.label === 'Cover letter')).toBe(true);
   });
+
+  it('matches all Indeed submit and continue button variants with click-submit selector', () => {
+    const SUBMIT_SELECTOR =
+      'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i], button[aria-label*="Submit" i], button[aria-label*="Continue" i], button[data-testid*="continue" i], [class*="continue" i]';
+
+    const doc = dom(`
+      <div>
+        <button id="btn-aria-continue" type="button" aria-label="Continue to next step"><span>Next</span></button>
+        <button id="btn-testid-continue" data-testid="continue-button">Continue</button>
+        <button id="btn-class-continue" class="ia-continueButton">Continue</button>
+        <button id="btn-type-submit" type="submit">Submit application</button>
+        <button id="btn-other" type="button">Back</button>
+      </div>
+    `);
+
+    const spanInsideAria = doc.querySelector('#btn-aria-continue span')!;
+    expect(spanInsideAria.closest(SUBMIT_SELECTOR)).toBe(doc.querySelector('#btn-aria-continue'));
+
+    const testIdBtn = doc.querySelector('#btn-testid-continue')!;
+    expect(testIdBtn.matches(SUBMIT_SELECTOR)).toBe(true);
+
+    const classBtn = doc.querySelector('#btn-class-continue')!;
+    expect(classBtn.matches(SUBMIT_SELECTOR)).toBe(true);
+
+    const submitBtn = doc.querySelector('#btn-type-submit')!;
+    expect(submitBtn.matches(SUBMIT_SELECTOR)).toBe(true);
+
+    const backBtn = doc.querySelector('#btn-other')!;
+    expect(backBtn.matches(SUBMIT_SELECTOR)).toBe(false);
+  });
 });

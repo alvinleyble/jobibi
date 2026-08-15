@@ -227,7 +227,7 @@ export default defineContentScript({
       const target = e.target as Element | null;
       if (!target) return;
       const submitEl = target.closest(
-        'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i], button[aria-label*="Submit" i]',
+        'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i], button[aria-label*="Submit" i], button[aria-label*="Continue" i], button[data-testid*="continue" i], [class*="continue" i]',
       );
       if (submitEl) scheduleCapture('click-submit', 300);
     };

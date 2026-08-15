@@ -2,7 +2,6 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import type { ExtractionResult } from '@jobibi/shared';
 import { SuggestCard } from './SuggestCard';
 import { supabase } from './supabase';
-import { humanizeErrorMessage } from './ingestError';
 
 function getMatchDotClass(confidence: number): string {
   if (confidence >= 0.95) return 'bg-success';
@@ -52,7 +51,6 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
   const [result, setResult] = useState<ExtractionResult | null>(null);
   const resultRef = useRef<ExtractionResult | null>(null);
   const [noListenerYet, setNoListenerYet] = useState(false);
-  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
   const draftMapRef = useRef<Map<string, string>>(new Map());
 
   const updateResult = (res: ExtractionResult | null) => {
@@ -113,78 +111,6 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
               });
             } catch {
               // telemetry best-effort; ignore
-            }
-          })();
-        } else if (t === 'JOBIBI_CAPTURE') {
-          const payload = (message as { payload: {
-            answers: Array<{ questionLabel: string; answerText: string; draftText: string | null; fieldSelector: string; fieldId: string; mappingVerified: boolean; mismatchReason?: string }>;
-            mismatches: Array<{ questionLabel: string; reason: string }>;
-            jobContext: ExtractionResult['jobContext'];
-            url?: string;
-            host?: string;
-          }}).payload;
-          const enrichedAnswers = payload.answers.map((a) => {
-            const qMatch = resultRef.current?.questions.find((q) => q.label === a.questionLabel);
-            if (qMatch && !a.draftText) {
-              const fromMap = draftMapRef.current.get(qMatch.id);
-              if (fromMap) return { ...a, draftText: fromMap };
-            }
-            return a;
-          });
-          void (async () => {
-            try {
-              const { data, error } = await supabase.functions.invoke('capture', {
-                body: {
-                  application: {
-                    company: payload.jobContext?.company,
-                    roleTitle: payload.jobContext?.roleTitle,
-                    site: payload.host,
-                    url: payload.url,
-                    urlHash: payload.url ? btoa(payload.url).slice(0, 32) : undefined,
-                  },
-                  jobContext: {
-                    role: payload.jobContext?.roleTitle,
-                    company: payload.jobContext?.company,
-                    url: payload.url,
-                  },
-                  answers: enrichedAnswers.map((a) => ({
-                    questionLabel: a.questionLabel,
-                    answerText: a.answerText,
-                    draftText: a.draftText ?? null,
-                    fieldSelector: a.fieldSelector,
-                    fieldId: a.fieldId,
-                    mappingVerified: a.mappingVerified,
-                    mismatchReason: a.mismatchReason,
-                  })),
-                  mismatches: payload.mismatches,
-                },
-              });
-              if (error) {
-                type CaptureErrorBody = { message?: string; error?: unknown };
-                let body: CaptureErrorBody | null = null;
-                try {
-                  const ctx = (error as unknown as { context?: { json: () => Promise<unknown> } }).context;
-                  if (ctx?.json) body = (await ctx.json()) as CaptureErrorBody | null;
-                } catch {}
-                const bodyError = body?.error;
-                const raw = body?.message ?? (typeof bodyError === 'string' ? bodyError : null);
-                const rawMsg = raw ?? (error as unknown as { message?: string }).message ?? String(error);
-                const friendlyMsg = humanizeErrorMessage(rawMsg);
-                setCaptureMsg(`Could not save application answers: ${friendlyMsg}`);
-                setTimeout(() => setCaptureMsg(null), 4000);
-              } else if (data) {
-                const inserted = (data as { inserted?: number }).inserted ?? 0;
-                const dropped = (data as { droppedMismatched?: number }).droppedMismatched ?? 0;
-                if (inserted || dropped) {
-                  const parts = [`Saved ${inserted} answer${inserted === 1 ? '' : 's'} to memory`];
-                  if (dropped) parts.push(`${dropped} mismatched skipped`);
-                  setCaptureMsg(parts.join(' · '));
-                  setTimeout(() => setCaptureMsg(null), 4000);
-                }
-              }
-            } catch (e) {
-              setCaptureMsg('We could not save your application answers. Please check your connection.');
-              setTimeout(() => setCaptureMsg(null), 4000);
             }
           })();
         }
@@ -282,13 +208,6 @@ export default function JobStreetQuestions({ isBetaTester = false }: { isBetaTes
           {result.jobContext.company ? (
             <span className="text-ink-secondary">· {result.jobContext.company}</span>
           ) : null}
-        </div>
-      ) : null}
-
-      {/* Capture Toast Banner */}
-      {captureMsg ? (
-        <div className="rounded-lg border border-success-tint-border bg-success-tint px-3 py-2 text-xs font-medium text-success">
-          {captureMsg}
         </div>
       ) : null}
 

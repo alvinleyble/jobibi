@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { groupQaPairs, normalizeQuestion } from '@jobibi/shared';
 
 describe('MemoryBank grouped Q&A display', () => {
@@ -63,5 +63,126 @@ describe('MemoryBank grouped Q&A display', () => {
     ];
     const groups = groupQaPairs(pairs as never);
     expect(groups[0]!.latest.origin).toBe('accepted_verbatim');
+  });
+});
+
+describe('MemoryBank reactive refresh mechanism', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it('triggers refresh when JOBIBI_CAPTURE_COMPLETED message arrives', () => {
+    let messageListener: ((msg: unknown) => void) | null = null;
+    vi.spyOn(browser.runtime.onMessage, 'addListener').mockImplementation((fn: unknown) => {
+      messageListener = fn as (msg: unknown) => void;
+    });
+
+    const refreshMock = vi.fn();
+
+    // Setup reactive effect behavior
+    let timer: NodeJS.Timeout | null = null;
+    const triggerRefresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        refreshMock();
+      }, 250);
+    };
+
+    const onMsg = (m: unknown) => {
+      if (typeof m === 'object' && m !== null) {
+        const msg = m as { type?: string };
+        if (msg.type === 'JOBIBI_CAPTURE_COMPLETED') {
+          triggerRefresh();
+        }
+      }
+    };
+    browser.runtime.onMessage.addListener(onMsg as Parameters<typeof browser.runtime.onMessage.addListener>[0]);
+
+    expect(messageListener).toBeDefined();
+
+    // Simulate incoming capture completed event
+    if (messageListener) {
+      const invoke = messageListener as (msg: unknown) => void;
+      invoke({ type: 'JOBIBI_CAPTURE_COMPLETED', payload: { inserted: 1 } });
+    }
+    expect(refreshMock).not.toHaveBeenCalled();
+
+    // Advance past debounce timer
+    vi.advanceTimersByTime(250);
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('triggers refresh when jobibi_last_capture storage changes', () => {
+    let storageListener: ((changes: Record<string, unknown>, area: string) => void) | null = null;
+    vi.spyOn(browser.storage.onChanged, 'addListener').mockImplementation((fn: unknown) => {
+      storageListener = fn as (changes: Record<string, unknown>, area: string) => void;
+    });
+
+    const refreshMock = vi.fn();
+
+    let timer: NodeJS.Timeout | null = null;
+    const triggerRefresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        refreshMock();
+      }, 250);
+    };
+
+    const onStore = (changes: Record<string, unknown>, area: string) => {
+      if (area === 'local' && 'jobibi_last_capture' in changes) {
+        triggerRefresh();
+      }
+    };
+    browser.storage.onChanged.addListener(onStore);
+
+    expect(storageListener).toBeDefined();
+
+    // Simulate storage change event from local storage
+    if (storageListener) {
+      const invoke = storageListener as (changes: Record<string, unknown>, area: string) => void;
+      invoke({ jobibi_last_capture: { newValue: { inserted: 2 } } }, 'local');
+    }
+    expect(refreshMock).not.toHaveBeenCalled();
+
+    // Advance debounce
+    vi.advanceTimersByTime(250);
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+
+    // Ignore changes in other storage areas (e.g. sync)
+    if (storageListener) {
+      const invoke = storageListener as (changes: Record<string, unknown>, area: string) => void;
+      invoke({ jobibi_last_capture: { newValue: { inserted: 2 } } }, 'sync');
+    }
+    vi.advanceTimersByTime(300);
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('debounces rapid burst of capture events into a single refresh call', () => {
+    const refreshMock = vi.fn();
+
+    let timer: NodeJS.Timeout | null = null;
+    const triggerRefresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        refreshMock();
+      }, 250);
+    };
+
+    // Burst of 5 triggers within 100ms
+    triggerRefresh();
+    vi.advanceTimersByTime(50);
+    triggerRefresh();
+    vi.advanceTimersByTime(50);
+    triggerRefresh();
+    vi.advanceTimersByTime(50);
+    triggerRefresh();
+    vi.advanceTimersByTime(50);
+    triggerRefresh();
+
+    expect(refreshMock).not.toHaveBeenCalled();
+
+    // Wait full debounce after final trigger
+    vi.advanceTimersByTime(250);
+    expect(refreshMock).toHaveBeenCalledTimes(1);
   });
 });

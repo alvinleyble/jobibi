@@ -77,6 +77,22 @@ Deno.serve(async (req) => {
 
     const { answers, application, jobContext, mismatches } = parsed.data;
 
+    // Instantiate embedder session once at request scope
+    let embedder: { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } | null = null;
+    try {
+      embedder = new Supabase.ai.Session('gte-small');
+    } catch {
+      embedder = null;
+    }
+    const getEmbedding = async (text: string, opts = { mean_pool: true, normalize: true }): Promise<number[] | null> => {
+      if (!embedder) return null;
+      try {
+        return await embedder.run(text.slice(0, 2000), opts);
+      } catch {
+        return null;
+      }
+    };
+
     // Resolve application row: use provided app or jobContext
     let applicationId: string | null = null;
     const company = application?.company ?? jobContext?.company ?? null;
@@ -142,6 +158,21 @@ Deno.serve(async (req) => {
     }
     const insertedQLabelsThisBatch: string[] = [];
 
+    // Query max chunk_index once before the answer loop
+    let nextChunkIndex = 0;
+    try {
+      const nextIdxRes = await supabase
+        .from('memory_chunks')
+        .select('chunk_index')
+        .eq('user_id', user.id)
+        .order('chunk_index', { ascending: false })
+        .limit(1);
+      const rows = (nextIdxRes.data as unknown as { chunk_index: number }[] | null) ?? [];
+      nextChunkIndex = rows.length ? rows[0].chunk_index + 1 : 0;
+    } catch {
+      nextChunkIndex = 0;
+    }
+
     for (const ans of answers) {
       // D16: fail closed — only a write explicitly marked verified survives.
       // A missing flag is treated the same as an explicit false.
@@ -171,13 +202,7 @@ Deno.serve(async (req) => {
       const { origin, editDistance } = deriveOrigin(ans.draftText ?? null, trimmedAnswer);
 
       // embedding for qa_pairs (for seen-before)
-      let embedding: number[] | null = null;
-      try {
-        const toEmbed = `${qLabel} ${trimmedAnswer}`.slice(0, 2000);
-        embedding = await new Supabase.ai.Session('gte-small').run(toEmbed, { mean_pool: true, normalize: true });
-      } catch {
-        embedding = null;
-      }
+      const embedding = await getEmbedding(`${qLabel} ${trimmedAnswer}`);
 
       const qaPayload: Record<string, unknown> = {
         user_id: user.id,
@@ -228,10 +253,7 @@ Deno.serve(async (req) => {
         let isDuplicate = false;
         try {
           // try to embed question for hybrid cosine comparison (fail open to keyword-only)
-          let qEmb: number[] | null = null;
-          try {
-            qEmb = await new Supabase.ai.Session('gte-small').run(qLabel.slice(0, 2000), { mean_pool: true, normalize: true });
-          } catch { qEmb = null; }
+          const qEmb = await getEmbedding(qLabel);
           for (const c of dedupQaRows.slice(0, -1)) {
             // exclude the just-pushed current row itself; check against prior rows only
             const s = scoreNearDuplicate(qLabel, { id: c.id, question_label: c.question_label, question_norm: c.question_norm, answer_text: '' , embedding: c.embedding as string | null } as never, { questionEmbedding: qEmb });
@@ -255,53 +277,46 @@ Deno.serve(async (req) => {
         if (isDuplicate) {
           dedupSkipped++;
         } else {
-        try {
-          let memEmb: number[] | null = null;
           try {
-            memEmb = await new Supabase.ai.Session('gte-small').run(trimmedAnswer, { mean_pool: true, normalize: true });
-          } catch { memEmb = null; }
-          // determine next chunk_index
-          const nextIdxRes = await supabase.from('memory_chunks').select('chunk_index').eq('user_id', user.id).order('chunk_index', { ascending: false }).limit(1);
-          const rows = (nextIdxRes.data as unknown as { chunk_index: number }[] | null) ?? [];
-          const nextIdx = rows.length ? rows[0].chunk_index + 1 : 0;
-          const memPayload: Record<string, unknown> = {
-            user_id: user.id,
-            document_id: null,
-            chunk_index: nextIdx,
-            type: 'qa_pair',
-            text: `Q: ${qLabel}\nA: ${trimmedAnswer}`,
-            embedding: memEmb ? JSON.stringify(memEmb) : null,
-          };
-          const { data: memRow, error: memErr } = await supabase.from('memory_chunks').insert(memPayload).select('id').single();
-          if (memErr) {
-            let recovered = false;
-            if (memEmb) {
-              const { data: memRow2, error: memErr2 } = await supabase.from('memory_chunks').insert({ ...memPayload, embedding: null }).select('id').single();
-              if (!memErr2 && memRow2) recovered = true;
-              else console.error('[capture] memory_chunks insert failed (after retry)', memErr2 ?? memErr);
+            const memEmb = await getEmbedding(trimmedAnswer);
+            const memPayload: Record<string, unknown> = {
+              user_id: user.id,
+              document_id: null,
+              chunk_index: nextChunkIndex++,
+              type: 'qa_pair',
+              text: `Q: ${qLabel}\nA: ${trimmedAnswer}`,
+              embedding: memEmb ? JSON.stringify(memEmb) : null,
+            };
+            const { data: memRow, error: memErr } = await supabase.from('memory_chunks').insert(memPayload).select('id').single();
+            if (memErr) {
+              let recovered = false;
+              if (memEmb) {
+                const { data: memRow2, error: memErr2 } = await supabase.from('memory_chunks').insert({ ...memPayload, embedding: null }).select('id').single();
+                if (!memErr2 && memRow2) recovered = true;
+                else console.error('[capture] memory_chunks insert failed (after retry)', memErr2 ?? memErr);
+              } else {
+                console.error('[capture] memory_chunks insert failed', memErr);
+              }
+              if (!recovered) memoryChunksFailed++;
             } else {
-              console.error('[capture] memory_chunks insert failed', memErr);
+              void memRow;
+              // track successful memory chunk for intra-batch dedup
+              const newChunkId = (memRow as { id: string }).id;
+              dedupChunks.push({ id: newChunkId, text: `Q: ${qLabel}\nA: ${trimmedAnswer}`, embedding: memEmb ? JSON.stringify(memEmb) : null });
+              insertedQLabelsThisBatch.push(qLabel);
             }
-            if (!recovered) memoryChunksFailed++;
-          } else {
-            void memRow;
-            // track successful memory chunk for intra-batch dedup
-            const newChunkId = (memRow as { id: string }).id;
-            dedupChunks.push({ id: newChunkId, text: `Q: ${qLabel}\nA: ${trimmedAnswer}`, embedding: memEmb ? JSON.stringify(memEmb) : null });
-            insertedQLabelsThisBatch.push(qLabel);
+            void insertedId;
+          } catch (e) {
+            memoryChunksFailed++;
+            console.error('[capture] memory_chunks insert failed', e);
           }
-          void insertedId;
-        } catch (e) {
-          memoryChunksFailed++;
-          console.error('[capture] memory_chunks insert failed', e);
-        }
         }
       }
     }
 
-    // S9: voice-corpus trigger — delta-since-last-rebuild >=10; style-profile owns claim/in-flight
+    // S9: voice-corpus trigger — non-blocking fire-and-forget; style-profile owns claim/in-flight
     if (inserted.length > 0) {
-      await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
+      void maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
     }
 
     return jsonResponse({
