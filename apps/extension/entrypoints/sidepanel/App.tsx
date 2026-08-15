@@ -41,14 +41,21 @@ function App() {
     let toastTimer: number | null = null;
     let errorTimer: number | null = null;
 
-    const showToast = (inserted: number, dropped = 0) => {
-      if (inserted || dropped) {
-        const parts = [`Saved ${inserted} answer${inserted === 1 ? '' : 's'} to memory`];
-        if (dropped) parts.push(`${dropped} mismatched skipped`);
-        setCaptureMsg(parts.join(' · '));
-        if (toastTimer) clearTimeout(toastTimer);
-        toastTimer = window.setTimeout(() => setCaptureMsg(null), 4000);
+    const showToast = (inserted: number, dropped = 0, updated = 0) => {
+      const total = inserted + updated;
+      let msg: string;
+      if (total > 0) {
+        msg = `Saved ${total} answer${total === 1 ? '' : 's'} to memory`;
+        if (dropped) msg += ` · ${dropped} skipped`;
+      } else if (dropped) {
+        msg = `${dropped} answer${dropped === 1 ? '' : 's'} skipped (mismatched)`;
+      } else {
+        // Capture ran but counts unclear — still confirm to user
+        msg = 'Answers saved to memory';
       }
+      setCaptureMsg(msg);
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => setCaptureMsg(null), 4000);
     };
 
     const showError = (message: string) => {
@@ -59,9 +66,9 @@ function App() {
 
     const onMsg = (message: unknown) => {
       if (typeof message === 'object' && message !== null) {
-        const m = message as { type?: string; payload?: { inserted?: number; droppedMismatched?: number; message?: string } };
+        const m = message as { type?: string; payload?: { inserted?: number; droppedMismatched?: number; updated?: number; message?: string } };
         if (m.type === 'JOBIBI_CAPTURE_COMPLETED' && m.payload) {
-          showToast(m.payload.inserted ?? 0, m.payload.droppedMismatched ?? 0);
+          showToast(m.payload.inserted ?? 0, m.payload.droppedMismatched ?? 0, (m.payload as { updated?: number }).updated ?? 0);
         } else if (m.type === 'JOBIBI_CAPTURE_FAILED' && m.payload?.message) {
           showError(m.payload.message);
         }
@@ -72,9 +79,9 @@ function App() {
     const onStorageChanged = (changes: Record<string, unknown>, area: string) => {
       if (area !== 'local') return;
       if ('jobibi_last_capture' in changes) {
-        const val = (changes.jobibi_last_capture as { newValue?: { inserted?: number; droppedMismatched?: number } })?.newValue;
-        if (val && typeof val.inserted === 'number') {
-          showToast(val.inserted, val.droppedMismatched ?? 0);
+        const val = (changes.jobibi_last_capture as { newValue?: { inserted?: number; updated?: number; droppedMismatched?: number } })?.newValue;
+        if (val) {
+          showToast(val.inserted ?? 0, val.droppedMismatched ?? 0, val.updated ?? 0);
         }
       }
       if ('jobibi_last_capture_error' in changes) {
