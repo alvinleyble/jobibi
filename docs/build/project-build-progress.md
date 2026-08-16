@@ -131,6 +131,13 @@
   5. **D-5 (Update/Save Capture Fix)**: Fixed Indeed SmartApply review → Edit → Update flow where clicking **"Update"** did not trigger capture. Extended click-submit selector in `indeed.content.ts`, `jobstreet.content.ts`, and `linkedin.content.ts` with `button[aria-label*="Update" i]`, `[data-testid*="update" i]`, `button[aria-label*="Save" i]`, `[data-testid*="save" i]` and added a `textContent` fallback matching `/^(submit|continue|next|update|save|save and continue|review|done|next step)$/i` so ATS-specific labels (Update, Save, Save and continue, etc.) trigger `scheduleCapture` via `click-text-match`.
   6. **Verification & Tests**: 268 unit tests passing (`pnpm test` — 236 `packages/shared` + 32 `apps/extension`), `pnpm compile` clean, extension builds clean at 1.29 MB. New tests in `packages/shared/src/adapters/indeed.test.ts` cover `button[aria-label="Update"]` selector and `textContent` fallback for `Update` / `Save and continue`.
 
+- 2026-08-16 — **Capture fix Slice 1 (Human-Value Resolution)** completed on branch `fm/jobibi-capture-human-value-resolution`. Fixes Findings A & B: capture previously stored a `<select>`'s opaque `.value` token and a bare `"checked"` string for radio/checkbox instead of the human-readable label the user actually saw.
+  1. **`readHumanValue` / `readHumanCheckboxGroupValue` (`packages/shared/src/capture/readHumanValue.ts`, exported from the package barrel)**: pure functions resolving a form element's human-readable text — selected `<option>` text for `<select>`, `label[for]` then wrapping `<label>` text (falling back to `.value`) for radio/checkbox, `''` for unchecked, and a checkbox group joined into **one row** per group via `', '` (Q1/Q2 decisions: one joined row per group, human text only — no raw token is stored).
+  2. **Wired into `readFieldValue` in all three content scripts** (`jobstreet.content.ts`, `indeed.content.ts`, `linkedin.content.ts`), replacing each script's ad hoc raw-`.value`/`"checked"` logic. `linkedin.content.ts` tries both `document` and the shadow roots so `label[for]` resolves across the shadow-DOM boundary (`#interop-outlet`).
+  3. **Tests**: `packages/shared/src/capture/readHumanValue.test.ts` (20 tests) covering select token-vs-visible-text, radio `label[for]` and wrapping-label resolution, and checkbox groups with 0/1/2 boxes checked.
+  4. **Out of scope for this slice** (tracked as later slices): button selectors/`scheduleCapture` (Slice 2), `dedupeLabelText`/`cleanLabel` (Slice 3), `isAdditionalQuestionsStep` (Slice 4).
+  5. **Verification**: 288 unit tests passing (`packages/shared` 256, `apps/extension` 32).
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -142,7 +149,7 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop + S14A storage abstraction & PGlite engine + `jobibi-capture-background-immediacy` (background capture routing, reactive Memory refresh, Edge function latency streamlining, Indeed selector alignment, Update/Save capture fix). All 268 unit tests passing with 0 errors.
+S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop + S14A storage abstraction & PGlite engine + `jobibi-capture-background-immediacy` (background capture routing, reactive Memory refresh, Edge function latency streamlining, Indeed selector alignment, Update/Save capture fix) + capture fix Slice 1 (human-value resolution for select/radio/checkbox). All 288 unit tests passing with 0 errors.
 
 **Still to come in S14:** S14A only builds the seam. Nothing selects a posture, nothing opens a local database, and no UI mentions Local BYO-Key yet.
 
