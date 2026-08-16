@@ -138,6 +138,13 @@
   4. **Out of scope for this slice** (tracked as later slices): button selectors/`scheduleCapture` (Slice 2), `dedupeLabelText`/`cleanLabel` (Slice 3), `isAdditionalQuestionsStep` (Slice 4).
   5. **Verification**: 288 unit tests passing (`packages/shared` 256, `apps/extension` 32).
 
+- 2026-08-16 — **JobStreet role-requirements extraction + reliable Continue trigger** (still on `fm/jobibi-capture-human-value-resolution`, PR #41). The role-requirements step's employer questions (salary/qualification/years-of-experience dropdowns, a radio group, a checkbox group) do not carry `_Q_` in id/name — that token lives in the option values — so the old `isApplyFlow` branch dropped every field on that step and the panel reported "No questions detected" until the questions surfaced one step late on Choose-documents.
+  1. **`_Q_` becomes positive-only scoping (`packages/shared/src/adapters/jobstreet.ts`)**: when the page has `_Q_` fields, keep only those (unchanged); when it doesn't, keep everything on the apply flow except the cover-letter textarea, now excluded via `isCoverLetterField`, a label/attribute heuristic mirroring `isCoverLetterField` in `linkedin.ts`/`indeed.ts`. Absence of `_Q_` no longer drops a field.
+  2. **Eager pre-navigation snapshot (`apps/extension/entrypoints/jobstreet.content.ts`)**: submit-like clicks (expanded button selector, gated to submit/continue/next/update/save-like text so it doesn't fire on unrelated buttons) snapshot the answered field mapping + human values synchronously before the SPA navigation; if the deferred post-navigation capture re-derives an empty step, the stashed snapshot is merged back in. Guarded by a same-application check (role/company + job path matching the snapshot) rather than re-deriving the now-gone mapping, preserving D16's cross-job guard without false missing-drops.
+  3. **Fixture + tests**: new `e2e/fixtures/jobstreet-role-requirements.html`, adapter unit tests in `jobstreet.test.ts`, and an e2e test in `capture.spec.ts` asserting human text ("2 years", "Yes", "Speaks proficiently, Writes proficiently") with no `PH_Q_…` tokens.
+  4. **Out of scope**: LinkedIn/Indeed eager-snapshot parity (captain's `snapshot-vs-d16` decision covers all three sites, but this slice's brief scopes the trigger fix to JobStreet only) — left for a follow-up slice; `linkedin.ts`/`indeed.ts` untouched.
+  5. **Verification**: 290 unit tests passing (`packages/shared` 258, `apps/extension` 32).
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
@@ -149,7 +156,7 @@ D6, D7, and D8 are closed. Phase 1 authorized.
 
 ## Current state of the repo
 
-S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop + S14A storage abstraction & PGlite engine + `jobibi-capture-background-immediacy` (background capture routing, reactive Memory refresh, Edge function latency streamlining, Indeed selector alignment, Update/Save capture fix) + capture fix Slice 1 (human-value resolution for select/radio/checkbox). All 288 unit tests passing with 0 errors.
+S1 through S13 complete + PR #33 output length calibration + PR #34 daily cover letter quota & attempt limit + PR #35 documents upload consolidation, per-document deletion, row truncation & usage quotas breakdown + PR #36 `sensitive_facts` drop + S14A storage abstraction & PGlite engine + `jobibi-capture-background-immediacy` (background capture routing, reactive Memory refresh, Edge function latency streamlining, Indeed selector alignment, Update/Save capture fix) + capture fix Slice 1 (human-value resolution for select/radio/checkbox) + JobStreet role-requirements extraction & reliable Continue trigger (PR #41, in progress). All 290 unit tests passing with 0 errors.
 
 **Still to come in S14:** S14A only builds the seam. Nothing selects a posture, nothing opens a local database, and no UI mentions Local BYO-Key yet.
 
