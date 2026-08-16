@@ -232,3 +232,7 @@ export function getAtsUrl(atsType: AtsType, port: number): string {
       return `http://localhost:${port}/generic-apply.html`;
   }
 }
+
+export function getRoleRequirementsUrl(port: number): string {
+  return `http://ph.jobstreet.com:${port}/apply/role-requirements`;
+}

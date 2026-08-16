@@ -322,4 +322,57 @@ describe('extractJobStreetQuestions', () => {
     expect(res.questions).toHaveLength(1);
     expect(res.questions[0].fieldType).toBe('textarea');
   });
+
+  it('detects non-_Q_ employer questions on the role-requirements step (both stepper labels present)', () => {
+    const doc = dom(`
+      <html><body>
+        <div>Answer employer questions</div>
+        <div>Choose documents</div>
+        <form>
+          <div class="question">
+            <label for="years">How many years of experience do you have?</label>
+            <select id="years" name="years">
+              <option value="PH_Q_8400_V_1_A_8404">1 year</option>
+              <option value="PH_Q_8400_V_2_A_8405" selected>2 years</option>
+            </select>
+          </div>
+          <fieldset>
+            <legend>Do you have experience automating tests?</legend>
+            <label><input type="radio" name="automate" value="PH_Q_7254_V_4_A_7256" checked /> Yes</label>
+            <label><input type="radio" name="automate" value="PH_Q_7254_V_5_A_7257" /> No</label>
+          </fieldset>
+          <fieldset>
+            <legend>Which English skills do you have?</legend>
+            <label><input type="checkbox" name="english" value="PH_Q_1_V_1_A_1" checked /> Speaks proficiently</label>
+            <label><input type="checkbox" name="english" value="PH_Q_1_V_2_A_2" checked /> Writes proficiently</label>
+          </fieldset>
+        </form>
+      </body></html>
+    `);
+    const res = extractJobStreetQuestions(doc);
+    // Select + radio group + checkbox group, none carrying _Q_ ids, must be
+    // detected (regression: isApplyFlow used to drop every non-_Q_ field).
+    expect(res.questions).toHaveLength(3);
+    expect(res.questions.map((q) => q.fieldType)).toEqual(['select', 'radio', 'checkbox']);
+    expect(res.questions[0].label).toBe('How many years of experience do you have?');
+    expect(res.questions[1].label).toBe('Do you have experience automating tests?');
+    expect(res.questions[2].label).toBe('Which English skills do you have?');
+  });
+
+  it('still excludes the cover-letter textarea on the apply flow when no _Q_ signal is present', () => {
+    const doc = dom(`
+      <html><body>
+        <div>Answer employer questions</div>
+        <div>Choose documents</div>
+        <form>
+          <div>
+            <span>Write a cover letter</span>
+            <textarea aria-label="Write a cover letter" placeholder="Introduce yourself to the employer"></textarea>
+          </div>
+        </form>
+      </body></html>
+    `);
+    const res = extractJobStreetQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
 });

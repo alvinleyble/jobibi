@@ -354,6 +354,35 @@ function contextFor(field: Element): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Cover-letter textarea detection (S8a)
+// ---------------------------------------------------------------------------
+
+/**
+ * The Choose-documents step carries a single cover-letter textarea, which is
+ * drafted through S8's adapter-independent Draft Cover Letter facility rather
+ * than treated as an application question. When the page has no `_Q_` employer
+ * question signal, that textarea is the one non-question field on the apply
+ * flow that must stay excluded — the role-requirements step's employer
+ * questions (salary, qualifications, years-of-experience, radio and checkbox
+ * groups) do NOT carry `_Q_` ids and must NOT be dropped alongside it.
+ * Mirrors the `isCoverLetterField` heuristics in linkedin.ts / indeed.ts.
+ */
+function isCoverLetterField(field: Element, label: string): boolean {
+  const lowLabel = label.toLowerCase();
+  if (lowLabel.includes('cover letter') || lowLabel.includes('coverletter')) return true;
+  if (lowLabel.trim() === 'cover letter') return true;
+  const aria = (field.getAttribute('aria-label') || '').toLowerCase();
+  if (aria.includes('cover letter') || aria.includes('coverletter')) return true;
+  const ph = (field.getAttribute('placeholder') || '').toLowerCase();
+  if (ph.includes('cover letter') || ph.includes('introduce yourself')) return true;
+  const name = (field.getAttribute('name') || '').toLowerCase();
+  if (name.includes('coverletter') || name.includes('cover_letter') || name.includes('cover-letter')) return true;
+  const id = (field.getAttribute('id') || '').toLowerCase();
+  if (id.includes('coverletter') || id.includes('cover_letter') || id.includes('cover-letter')) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Job context (best-effort)
 // ---------------------------------------------------------------------------
 
@@ -410,12 +439,20 @@ export function extractJobStreetQuestions(root: ParentNode): ExtractionResult {
 
   const rawFields = Array.from((root as Document | Element).querySelectorAll?.(FIELD_SELECTOR) ?? []);
 
-  // Filter: only visible and inside a likely form region + scoped to the
-  // "Answer employer questions" step (user decision: not hardcoded strings).
-  // JobStreet employer questions have id/name containing "_Q_" (e.g.
-  // PH_Q_7791_V86_A151031, PH_Q_7288…). Stepper, job header
-  // ("Applying for…"), profile card, and Choose-documents radios have ids
-  // like _r_2p / _r_7d_ with no _Q_ — filtering by that is site-generic.
+  // Site-generic step scoping: when the page has real employer questions
+  // (PH_Q_ / _Q_ — e.g. PH_Q_7791_V86_A151031, PH_Q_7288…), keep only those.
+  // This excludes stepper, job header ("Applying for…"), profile card, and
+  // the Choose-documents cover-letter textarea without hardcoding any company
+  // name. On the role-requirements step the employer questions do NOT carry
+  // _Q_ ids (salary/qualification/year dropdowns, radio and checkbox groups),
+  // so _Q_ is a positive-only signal: its absence never drops a field.
+  const hasEmployerQOnPage = rawFields.some(
+    (f) => /_Q_/.test(f.getAttribute('id') || '') || /_Q_/.test(f.getAttribute('name') || ''),
+  );
+  const bodyText = (root as Document).body?.textContent || (root as Document).textContent || '';
+  const isApplyFlow =
+    bodyText.includes('Answer employer questions') && bodyText.includes('Choose documents');
+
   const fields = rawFields.filter((el) => {
     if (!isVisible(el)) return false;
     const type = (el.getAttribute('type') || '').toLowerCase();
@@ -425,27 +462,11 @@ export function extractJobStreetQuestions(root: ParentNode): ExtractionResult {
     const name = (el.getAttribute('name') || '').toLowerCase();
     if (['q', 'search', 'keyword'].includes(name) && !(el.closest('form'))) return false;
 
-    // Site-generic step scoping: when the page has real employer
-    // questions (PH_Q_ / _Q_ — e.g. PH_Q_7791, PH_Q_7288), keep only those.
-    // This automatically excludes stepper, job header (Applying for…),
-    // profile card, and the Choose-documents cover-letter textarea without
-    // hardcoding any company name. Test fixtures have no _Q_ and no
-    // apply stepper, so we fall back to keeping everything there.
-    const id = el.getAttribute('id') || '';
-    const rawName = el.getAttribute('name') || '';
-    const hasEmployerQOnPage = rawFields.some(
-      (f) => /_Q_/.test(f.getAttribute('id') || '') || /_Q_/.test(f.getAttribute('name') || ''),
-    );
     if (hasEmployerQOnPage) {
+      const id = el.getAttribute('id') || '';
+      const rawName = el.getAttribute('name') || '';
       const isEmployerQ = /_Q_/.test(id) || /_Q_/.test(rawName) || /question-.*_Q_/.test(id);
       if (!isEmployerQ) return false;
-    } else {
-      // No employer Q on page — could be Choose-documents step (has stepper)
-      // or a test fixture. Only filter if we're on a real Apply flow
-      // (stepper text present) — then exclude all non-question fields.
-      const bodyText = (root as Document).body?.textContent || (root as Document).textContent || '';
-      const isApplyFlow = bodyText.includes('Answer employer questions') && bodyText.includes('Choose documents');
-      if (isApplyFlow) return false;
     }
 
     if (type === 'radio' || type === 'checkbox') {
@@ -471,6 +492,12 @@ export function extractJobStreetQuestions(root: ParentNode): ExtractionResult {
     if (label.length < 4) continue;
     if (label.length > 500) continue;
     if (label.length > 220 && !label.trim().endsWith('?')) continue;
+
+    // S8a: on the real apply flow, when there is no _Q_ employer-question
+    // signal, exclude the Choose-documents cover-letter textarea. Other
+    // non-_Q_ fields here are the role-requirements employer questions and
+    // must stay (they carry no _Q_ id).
+    if (!hasEmployerQOnPage && isApplyFlow && isCoverLetterField(field, label)) continue;
 
     const fid = fieldId(field);
     if (seenIds.has(fid)) continue;

@@ -1,4 +1,4 @@
-import { extractIndeedQuestions, verifySingleMapping, INDEED_QUESTIONS_MODULE_PATH_RE, executeAutofill } from '@jobibi/shared';
+import { extractIndeedQuestions, verifySingleMapping, INDEED_QUESTIONS_MODULE_PATH_RE, executeAutofill, readHumanValue, readHumanCheckboxGroupValue } from '@jobibi/shared';
 import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload } from '@jobibi/shared';
 
 
@@ -70,18 +70,13 @@ export default defineContentScript({
     const observer = new MutationObserver(debouncedScan);
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: false });
 
+    // Human-readable value resolution (Findings A & B)
     function readFieldValue(el: Element): string {
-      if (el instanceof HTMLTextAreaElement) return el.value;
-      if (el instanceof HTMLSelectElement) return el.value;
-      if (el instanceof HTMLInputElement) {
-        const t = el.type.toLowerCase();
-        if (t === 'checkbox' || t === 'radio') {
-          if (!el.checked) return '';
-          return el.value || (el.checked ? 'checked' : '');
-        }
-        return el.value;
+      if (el instanceof HTMLInputElement && el.type.toLowerCase() === 'checkbox' && el.getAttribute('name')) {
+        const gv = readHumanCheckboxGroupValue(el, document);
+        if (gv) return gv;
       }
-      return (el as HTMLElement).innerText ?? '';
+      return readHumanValue(el, document);
     }
 
     function getFieldElement(q: ExtractedQuestion): Element | null {

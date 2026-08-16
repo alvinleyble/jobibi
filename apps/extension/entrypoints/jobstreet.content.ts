@@ -1,5 +1,25 @@
-import { extractJobStreetQuestions, verifySingleMapping, executeAutofill } from '@jobibi/shared';
+import { extractJobStreetQuestions, verifySingleMapping, executeAutofill, readHumanValue, readHumanCheckboxGroupValue } from '@jobibi/shared';
 import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload } from '@jobibi/shared';
+
+// Answer entry shape shared between the live capture path and the eager
+// pre-navigation snapshot (Slice 2: reliable Continue trigger).
+interface CaptureAnswerEntry {
+  questionLabel: string;
+  answerText: string;
+  draftText: string | null;
+  fieldSelector: string;
+  fieldId: string;
+  mappingVerified: boolean;
+  mismatchReason?: string;
+}
+
+interface CaptureSnapshot {
+  answers: CaptureAnswerEntry[];
+  mismatches: Array<{ questionLabel: string; reason: string }>;
+  jobContext: ExtractionResult['jobContext'];
+  url: string;
+  host: string;
+}
 
 
 export default defineContentScript({
@@ -27,6 +47,8 @@ export default defineContentScript({
     // D16: mapping snapshot taken at the moment a draft is offered for a question —
     // this, not a later re-scan, is "the mapping used at suggestion time".
     const suggestionMappingById = new Map<string, ExtractedQuestion>();
+    // Slice 2: eager pre-navigation capture snapshot (see performCapture).
+    let pendingCaptureSnapshot: CaptureSnapshot | null = null;
 
     function scanAndBroadcast() {
       const result = extractJobStreetQuestions(document);
@@ -78,19 +100,18 @@ export default defineContentScript({
     });
 
     // ---- S6 capture helpers (D16 + D12) ----
+    // Human-readable value resolution (Findings A & B): delegated to shared
+    // readHumanValue / readHumanCheckboxGroupValue. Checkbox groups are read
+    // as a joined ", " list rather than a single token.
     function readFieldValue(el: Element): string {
-      if (el instanceof HTMLTextAreaElement) return el.value;
-      if (el instanceof HTMLSelectElement) return el.value;
-      if (el instanceof HTMLInputElement) {
-        const t = el.type.toLowerCase();
-        if (t === 'checkbox' || t === 'radio') {
-          if (!el.checked) return '';
-          // For grouped checkboxes, read value; for radio, same
-          return el.value || (el.checked ? 'checked' : '');
-        }
-        return el.value;
+      if (el instanceof HTMLInputElement && el.type.toLowerCase() === 'checkbox' && el.getAttribute('name')) {
+        const gv = readHumanCheckboxGroupValue(el, document);
+        // gv is '' when none checked — matches previous "skip empty" contract
+        if (gv) return gv;
+        // fall through to single-elt handling so unchecked firstEl returns ''
+        // (group case with 0 checked is correctly '' even without this)
       }
-      return (el as HTMLElement).innerText ?? '';
+      return readHumanValue(el, document);
     }
 
     function getFieldElement(q: ExtractedQuestion): Element | null {
@@ -119,19 +140,14 @@ export default defineContentScript({
       return null;
     }
 
-    function performCapture(trigger: string) {
-      const freshResult = extractJobStreetQuestions(document);
-      const freshById = new Map<string, ExtractedQuestion>(freshResult.questions.map((q) => [q.id, q]));
-
-      const answers: Array<{
-        questionLabel: string;
-        answerText: string;
-        draftText: string | null;
-        fieldSelector: string;
-        fieldId: string;
-        mappingVerified: boolean;
-        mismatchReason?: string;
-      }> = [];
+    // D16 + D12: read answered values from a given extraction result. Reuses
+    // the suggestion-time mapping (verifySingleMapping) for questions Jobibi
+    // helped with, then falls through to every identified question field.
+    function readAnswersFrom(
+      result: ExtractionResult,
+    ): { answers: CaptureAnswerEntry[]; mismatches: Array<{ questionLabel: string; reason: string }> } {
+      const freshById = new Map<string, ExtractedQuestion>(result.questions.map((q) => [q.id, q]));
+      const answers: CaptureAnswerEntry[] = [];
       const mismatches: Array<{ questionLabel: string; reason: string }> = [];
       const seenFreshIds = new Set<string>();
 
@@ -162,7 +178,7 @@ export default defineContentScript({
       }
 
       // D12: capture every identified question field, including ones Jobibi did not help with
-      for (const freshQ of freshResult.questions) {
+      for (const freshQ of result.questions) {
         if (seenFreshIds.has(freshQ.id)) continue;
         const el = getFieldElement(freshQ);
         if (!el) continue;
@@ -178,6 +194,70 @@ export default defineContentScript({
         });
       }
 
+      return { answers, mismatches };
+    }
+
+    // Slice 2: snapshot field values + mapping synchronously BEFORE the SPA
+    // navigation that a Continue click triggers. Re-deriving here (at click
+    // time) is the D16 "capture time" — the deferred performCapture may run
+    // after the DOM has already swapped to the next step.
+    function captureSnapshotNow(): CaptureSnapshot | null {
+      const result = extractJobStreetQuestions(document);
+      const { answers, mismatches } = readAnswersFrom(result);
+      if (answers.length === 0 && mismatches.length === 0) return null;
+      return {
+        answers,
+        mismatches,
+        jobContext: result.jobContext,
+        url: location.href,
+        host: location.host,
+      };
+    }
+
+    // D16 cross-job guard for the stashed snapshot: after an SPA step
+    // transition the old mapping is gone, so verify the application is still
+    // the same job (role/company match when both are present, and the URL's
+    // job path — everything before /apply/ — is unchanged) instead of
+    // re-deriving the now-gone question→field mapping.
+    function isSameApplication(snapshot: CaptureSnapshot, fresh: ExtractionResult): boolean {
+      const s = snapshot.jobContext;
+      const f = fresh.jobContext;
+      if (s.roleTitle && f.roleTitle && s.roleTitle !== f.roleTitle) return false;
+      if (s.company && f.company && s.company !== f.company) return false;
+      try {
+        const snapJob = new URL(snapshot.url).pathname.split('/apply/')[0] ?? '';
+        const freshJob = location.pathname.split('/apply/')[0] ?? '';
+        if (snapJob && freshJob && snapJob !== freshJob) return false;
+      } catch {
+        // URL unparseable — fall back to jobContext check alone.
+      }
+      return true;
+    }
+
+    function performCapture(trigger: string) {
+      const freshResult = extractJobStreetQuestions(document);
+      const fresh = readAnswersFrom(freshResult);
+      let answers = fresh.answers;
+      let mismatches = fresh.mismatches;
+      let jobContext = freshResult.jobContext;
+
+      // Eager-snapshot fallback: when the deferred capture re-derives an empty
+      // result (the SPA already navigated to the next step), merge the answers
+      // stashed at click time — guarded by the same-application check.
+      const snap = pendingCaptureSnapshot;
+      pendingCaptureSnapshot = null;
+      if (
+        answers.length === 0 &&
+        mismatches.length === 0 &&
+        snap &&
+        snap.answers.length > 0 &&
+        isSameApplication(snap, freshResult)
+      ) {
+        answers = snap.answers;
+        mismatches = snap.mismatches;
+        jobContext = snap.jobContext;
+      }
+
       if (answers.length === 0 && mismatches.length === 0) return;
 
       // Expose for testing: attach last capture payload to window for headless verification
@@ -186,7 +266,7 @@ export default defineContentScript({
           answers,
           mismatches,
           trigger,
-          jobContext: freshResult.jobContext,
+          jobContext,
           url: location.href,
           host: location.host,
         };
@@ -200,7 +280,7 @@ export default defineContentScript({
           payload: {
             answers,
             mismatches,
-            jobContext: freshResult.jobContext,
+            jobContext,
             trigger,
             url: location.href,
             host: location.host,
@@ -259,7 +339,55 @@ export default defineContentScript({
       runCapture(trigger);
     };
 
+    // Expanded submit-like button selector. JobStreet/Seek "Continue" is often
+    // a hash-classed <button> or an <a role="button"> outside a <form>, so a
+    // bare type=submit match misses it. The text fallback below covers the rest.
+    const BUTTON_SELECTOR = [
+      'button[type="submit"]',
+      'input[type="submit"]',
+      'button[data-automation*="submit" i]',
+      'button[data-automation*="continue" i]',
+      'button[data-automation*="next" i]',
+      'button[data-automation*="review" i]',
+      '[data-testid*="submit" i]',
+      '[data-testid*="continue" i]',
+      '[data-testid*="next" i]',
+      '[data-testid*="review" i]',
+      'button[aria-label*="Submit" i]',
+      'button[aria-label*="Continue" i]',
+      'button[aria-label*="Next" i]',
+      'button[aria-label*="Review" i]',
+      'button[aria-label*="Save" i]',
+      'button[aria-label*="Update" i]',
+    ].join(', ');
+
+    // Broader matchers with no reliable intent signal on their own — only fire
+    // capture when the element's visible text also passes isSubmitText().
+    const BROAD_BUTTON_SELECTOR = [
+      'a[role="button"]',
+      '[class*="submit" i]',
+      '[class*="continue" i]',
+      '[class*="next" i]',
+      '[class*="review" i]',
+    ].join(', ');
+
+    const isSubmitText = (raw: string): boolean => {
+      const t = raw.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (/^(submit|continue|next|update|save|save and continue|review|done|next step)$/.test(t)) return true;
+      // Contains-match with a step indicator ("Continue (2/3)", "Review →").
+      return /(^|\s)(continue|review|next|submit|save|update)(\s|$|\(|•|→|›)/.test(t);
+    };
+
+    // Take the eager pre-navigation snapshot once per user action.
+    const stashSnapshotIfAny = () => {
+      if (pendingCaptureSnapshot) return;
+      const snap = captureSnapshotNow();
+      if (snap) pendingCaptureSnapshot = snap;
+    };
+
     const onSubmitCapture = () => {
+      // Snapshot before the submit default action navigates.
+      stashSnapshotIfAny();
       // small delay to let DOM settle (e.g., React controlled value flush)
       scheduleCapture('submit', 150);
     };
@@ -268,20 +396,26 @@ export default defineContentScript({
     const onClickCapture = (e: Event) => {
       const target = e.target as Element | null;
       if (!target) return;
-      const submitEl = target.closest(
-        'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i], button[aria-label*="Submit" i], button[aria-label*="Continue" i], button[data-testid*="continue" i], [class*="continue" i], button[aria-label*="Update" i], [data-testid*="update" i], button[aria-label*="Save" i], [data-testid*="save" i]',
-      );
+      const submitEl = target.closest(BUTTON_SELECTOR);
       if (submitEl) {
+        stashSnapshotIfAny();
+        scheduleCapture('click-submit', 300);
+        return;
+      }
+      // Broad matchers (a[role=button], generic submit/continue/next/review
+      // class substrings) have no reliable intent on their own — require the
+      // element's visible text to also look like a submission action.
+      const broadEl = target.closest(BROAD_BUTTON_SELECTOR);
+      if (broadEl && isSubmitText(broadEl.textContent ?? '')) {
+        stashSnapshotIfAny();
         scheduleCapture('click-submit', 300);
         return;
       }
       // textContent fallback for ATS-specific labels (Update, Save, etc.)
-      const btn = (e.target as Element | null)?.closest('button, input[type="submit"]');
-      if (btn) {
-        const text = btn.textContent?.trim() ?? '';
-        if (/^(submit|continue|next|update|save|save and continue|review|done|next step)$/i.test(text)) {
-          scheduleCapture('click-text-match', 300);
-        }
+      const btn = (e.target as Element | null)?.closest('button, input[type="submit"], a[role="button"]');
+      if (btn && isSubmitText(btn.textContent ?? '')) {
+        stashSnapshotIfAny();
+        scheduleCapture('click-text-match', 300);
       }
     };
     document.addEventListener('click', onClickCapture, true);

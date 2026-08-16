@@ -1,4 +1,4 @@
-import { extractLinkedInQuestions, verifySingleMapping, executeAutofill } from '@jobibi/shared';
+import { extractLinkedInQuestions, verifySingleMapping, executeAutofill, readHumanValue, readHumanCheckboxGroupValue } from '@jobibi/shared';
 import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload } from '@jobibi/shared';
 
 
@@ -122,18 +122,36 @@ export default defineContentScript({
     // Poll once more shortly after init in case shadow host is injected late
     window.setTimeout(ensureShadowObservers, 1500);
 
+    // Human-readable value resolution (Findings A & B) — shadow-aware.
+    // Label queries are tried across the shadow root as well as document so
+    // that <label for> inside #interop-outlet shadow is still found.
     function readFieldValue(el: Element): string {
-      if (el instanceof HTMLTextAreaElement) return el.value;
-      if (el instanceof HTMLSelectElement) return el.value;
-      if (el instanceof HTMLInputElement) {
-        const t = el.type.toLowerCase();
-        if (t === 'checkbox' || t === 'radio') {
-          if (!el.checked) return '';
-          return el.value || (el.checked ? 'checked' : '');
+      const tryRoots: ParentNode[] = [document, ...getShadowRoots().filter((r) => r !== (document as unknown as ParentNode))];
+
+      const isCheckboxGroup = el instanceof HTMLInputElement && el.type.toLowerCase() === 'checkbox' && !!el.getAttribute('name');
+      if (isCheckboxGroup) {
+        let tokenFallback = '';
+        for (const r of tryRoots) {
+          const gv = readHumanCheckboxGroupValue(el, r);
+          if (!gv) continue;
+          if (!tokenFallback) tokenFallback = gv;
         }
-        return el.value;
+        return tokenFallback;
       }
-      return (el as HTMLElement).innerText ?? '';
+
+      // Single select / radio / checkbox / text: try each root, preferring a label-derived value over raw token.
+      let tokenFallback = '';
+      for (const r of tryRoots) {
+        const v = readHumanValue(el, r);
+        if (!v) continue;
+        // For radio/checkbox/select, a fallback equals the raw value; a label differs.
+        const raw = (el as HTMLInputElement).value ?? (el as HTMLSelectElement).value ?? '';
+        if (v !== raw) return v;
+        if (!tokenFallback) tokenFallback = v;
+      }
+      if (tokenFallback) return tokenFallback;
+      // No root yielded a value (e.g. unchecked) — let the primary root decide '' vs value for text inputs.
+      return readHumanValue(el, document);
     }
 
     function getFieldElement(q: ExtractedQuestion): Element | null {
