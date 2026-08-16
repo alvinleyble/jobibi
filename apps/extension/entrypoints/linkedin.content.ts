@@ -130,47 +130,13 @@ export default defineContentScript({
 
       const isCheckboxGroup = el instanceof HTMLInputElement && el.type.toLowerCase() === 'checkbox' && !!el.getAttribute('name');
       if (isCheckboxGroup) {
-        // Prefer a joined label result from any root; fall back to raw tokens only if labels absent.
-        let fallback = '';
+        let tokenFallback = '';
         for (const r of tryRoots) {
           const gv = readHumanCheckboxGroupValue(el, r);
           if (!gv) continue;
-          // Heuristic: gv that still contains a raw token pattern PH_Q_ suggests label lookup missed — keep searching.
-          const hasToken = /PH_Q_/.test(gv);
-          if (!hasToken) return gv;
-          if (!fallback) fallback = gv;
+          if (!tokenFallback) tokenFallback = gv;
         }
-        if (fallback) return fallback;
-        // Union across roots via direct set (covers checkboxes split across shadow + light DOM)
-        const name = (el as HTMLInputElement).getAttribute('name')!;
-        const escName = (globalThis as unknown as { CSS?: { escape: (v: string) => string } }).CSS?.escape
-          ? (globalThis as unknown as { CSS: { escape: (v: string) => string } }).CSS.escape(name)
-          : name.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
-        const checkedSet = new Set<HTMLInputElement>();
-        for (const r of tryRoots) {
-          try {
-            const list = (r as unknown as Document).querySelectorAll?.(`input[type="checkbox"][name="${escName}"]:checked`);
-            if (list) for (const cb of Array.from(list) as HTMLInputElement[]) checkedSet.add(cb);
-          } catch {}
-        }
-        if (!checkedSet.size) return '';
-        const texts: string[] = [];
-        for (const cb of checkedSet) {
-          let best: string | null = null;
-          let tokenFallback = '';
-          for (const r of tryRoots) {
-            const v = readHumanValue(cb, r);
-            if (!v) continue;
-            if (v !== cb.value) { best = v; break; }
-            if (!tokenFallback) tokenFallback = v;
-          }
-          texts.push(best ?? tokenFallback ?? cb.value);
-        }
-        // dedupe by text preserving order
-        const seen = new Set<string>();
-        const deduped: string[] = [];
-        for (const t of texts) if (t && !seen.has(t)) { seen.add(t); deduped.push(t); }
-        return deduped.join(', ');
+        return tokenFallback;
       }
 
       // Single select / radio / checkbox / text: try each root, preferring a label-derived value over raw token.
