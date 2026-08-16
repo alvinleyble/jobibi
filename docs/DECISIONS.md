@@ -187,7 +187,7 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 
 **Out of scope, folded into this record's rationale:** the "10 answers" delta, "100-item cap," and "no UI" choices are parameters of this same distillation design, not separate decisions warranting their own records. Freshness clocks, proactive grilling, intake-flow changes, and style-profile viewing/editing UI remain explicitly out of scope.
 
-## D20 — Local-first architecture (supersedes D2) — **accepted** (2026-08-15)
+## D20 — Local-first architecture (supersedes D2) — **superseded by D23** (2026-08-16)
 
 **Decision:** Memory storage moves from Supabase Postgres to PGlite (in-process Postgres WASM, running inside the extension's service worker). This is the new production default for all new users. Cloud mode is removed / becomes legacy-only. The Supabase project is reduced to Auth-only (email OTP, no application-data tables). AI calls (suggest, gap-answer, draft-cover-letter, etc.) continue to flow through a Jobibi-managed proxy endpoint that holds the OpenAI key — the extension itself still ships zero secrets.
 
@@ -210,7 +210,7 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 
 **Scope of this slice:** PGlite integration + storage abstraction layer. Auth model, AI call path, and business model are refined in D21.
 
-## D21 — Two-posture architecture + BYO-Key model — **accepted** (2026-08-15)
+## D21 — Two-posture architecture + BYO-Key model — **superseded by D23** (2026-08-16)
 
 **Decision:** Jobibi ships as a single extension with two selectable operating postures chosen at first launch via a clear mode picker: **Local BYO-Key** (default/focus) and **Cloud SaaS** (turnkey with sync). Local LLM (Ollama/LM Studio) is dropped from scope to avoid onboarding complexity and model degradation.
 
@@ -228,7 +228,7 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 
 **Build order:** (1) Storage abstraction + PGlite, (2) Client AI abstraction + Provider adapters, (3) Posture picker UI & settings, (4) Cloud subscription billing (later).
 
-## D22 — Local-First Runtime Guardrails, Concurrency & Data Isolation — **accepted** (2026-08-15)
+## D22 — Local-First Runtime Guardrails, Concurrency & Data Isolation — **superseded by D23** (2026-08-16)
 
 **Decision:** The implementation of Local BYO-Key Mode is bound by five strict runtime, privacy, and architectural guardrails:
 
@@ -238,3 +238,11 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 4. **Transparent Background Distillation:** Style profile rebuilding (D19) runs automatically after every 10 qualifying user answers, with a subtle UI indicator in the Memory Tab ("✨ Updating your writing style profile...") so users are aware of background token usage on their personal API key.
 5. **Zero-Outbound Telemetry Boundary:** In Local Mode, all `gate_decisions`, `extraction_failures`, and `capture_mismatches` are stored strictly in local PGlite tables. All outbound network requests to Supabase or remote analytics are hard-disabled at the client transport layer.
 6. **Isolated Silos with 1-Click Cloud Import:** Cloud and Local storage remain distinct isolated databases. Users switching from Cloud to Local in Settings are offered an optional one-time "Import Cloud Memory to Local" copy step to avoid starting from scratch without establishing continuous sync.
+
+## D23 — Cloud SaaS only; Local BYO-Key and Local LLM dropped — **accepted** (2026-08-16)
+
+**Decision:** Jobibi ships Cloud SaaS (Mode 1) only. The two-posture architecture of D21 is withdrawn: the Local BYO-Key posture ("hybrid" / Mode 2) and Local LLM (Mode 3) are dropped.
+
+**Supersedes:** D20 (local-first default), D21 (two-posture), D22 (local runtime guardrails). The S14A storage-abstraction slice (PGlite + StorageAdapter, PR #38) is unused by the single-mode product, and S14 (the Local-posture UI/UX spec: BYO-Key entry, cloud import, ONNX download UX) is deferred indefinitely.
+
+**Unchanged for Cloud SaaS Mode 1 (D5b/D5c/D7):** Supabase Postgres + Supabase Auth, AI calls routed through the Jobibi proxy (OpenAI key held in Edge Function secrets; the extension ships zero secrets), and gte-small embeddings running in-process inside Edge Functions. No BYO-Key entry, no in-browser ONNX download, no cloud-to-local import.
