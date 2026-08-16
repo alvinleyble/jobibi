@@ -47,6 +47,15 @@ export function startFixtureServer(port = 0): Promise<FixtureServer> {
         return;
       }
 
+      if (pathname.includes('role-requirements')) {
+        const file = path.join(fixturesDir, 'jobstreet-role-requirements.html');
+        if (fs.existsSync(file)) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(fs.readFileSync(file));
+          return;
+        }
+      }
+
       if (pathname.includes('jobstreet') || (pathname.includes('apply') && !pathname.includes('indeed') && !pathname.includes('generic') && !pathname.includes('linkedin'))) {
         const file = path.join(fixturesDir, 'jobstreet-apply.html');
         if (fs.existsSync(file)) {

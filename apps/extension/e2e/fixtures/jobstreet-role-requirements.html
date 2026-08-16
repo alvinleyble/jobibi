@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>JobStreet Apply - Role Requirements</title>
+</head>
+<body>
+  <!-- Stepper labels are always visible across every apply step -->
+  <nav class="stepper">
+    <ol>
+      <li>Answer employer questions</li>
+      <li>Choose documents</li>
+    </ol>
+  </nav>
+
+  <!-- Job header stays across steps so jobContext is still resolvable after Continue -->
+  <div class="job-header">
+    <h1 data-automation="jobTitle" class="job-title">Senior Software Engineer</h1>
+    <h2 data-automation="companyName" class="company-name">TechCorp Philippines</h2>
+  </div>
+
+  <div class="apply-container">
+    <form id="role-requirements-form">
+      <!-- Employer questions that do NOT carry _Q_ ids (mirrors the live
+           role-requirements step). Option values are opaque PH_Q_ tokens;
+           the human text lives in the visible option/label text. -->
+      <div class="question-container">
+        <label for="years">How many years of experience do you have?</label>
+        <select id="years" name="years">
+          <option value="PH_Q_8400_V_1_A_8404">1 year</option>
+          <option value="PH_Q_8400_V_2_A_8405" selected>2 years</option>
+          <option value="PH_Q_8400_V_3_A_8406">3+ years</option>
+        </select>
+      </div>
+
+      <div class="question-container">
+        <fieldset>
+          <legend>Do you have experience automating tests?</legend>
+          <label><input type="radio" name="automate" value="PH_Q_7254_V_4_A_7256" checked /> Yes</label>
+          <label><input type="radio" name="automate" value="PH_Q_7254_V_5_A_7257" /> No</label>
+        </fieldset>
+      </div>
+
+      <div class="question-container">
+        <fieldset>
+          <legend>Which English skills do you have?</legend>
+          <label><input type="checkbox" name="english" value="PH_Q_1_V_1_A_1" checked /> Speaks proficiently</label>
+          <label><input type="checkbox" name="english" value="PH_Q_1_V_2_A_2" checked /> Writes proficiently</label>
+        </fieldset>
+      </div>
+
+      <!-- Continue: NOT type=submit, hash-style class → exercises the expanded
+           selector + text fallback, not the type=submit path. -->
+      <div class="form-actions">
+        <button type="button" class="_1uj3a3" id="continue-btn">Continue</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    // Simulate the SPA step transition: clicking Continue removes the question
+    // fields. The content script's deferred capture (300 ms) then re-derives an
+    // empty step and must fall back to the eager pre-navigation snapshot.
+    document.getElementById('continue-btn').addEventListener('click', function () {
+      document.getElementById('role-requirements-form').querySelectorAll('.question-container').forEach(function (el) {
+        el.remove();
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { startFixtureServer, type FixtureServer } from './helpers/server';
-import { launchExtensionContext, openSidepanel, seedSession, getAtsUrl, type TestExtensionContext } from './helpers/extension';
+import { launchExtensionContext, openSidepanel, seedSession, getAtsUrl, getRoleRequirementsUrl, type TestExtensionContext } from './helpers/extension';
 
 test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
   let server: FixtureServer;
@@ -95,6 +95,70 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
     // Verify job context
     expect(captureRequestBody.application.roleTitle).toBe('Senior Software Engineer');
     expect(captureRequestBody.application.company).toBe('TechCorp Philippines');
+  });
+
+  test('JobStreet role-requirements: non-_Q_ questions detected and Continue captures human text (no PH_Q_ tokens)', async () => {
+    const sidepanel = await openSidepanel(ext.context, ext.extensionId);
+    await seedSession(sidepanel, { isBetaTester: true });
+    await sidepanel.reload();
+    await sidepanel.waitForLoadState('domcontentloaded');
+
+    let captureRequestBody: any = null;
+
+    // Intercept capture Edge function across the browser context
+    await ext.context.route('**/functions/v1/capture', async (route) => {
+      const postData = route.request().postDataJSON();
+      captureRequestBody = postData;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          inserted: 3,
+          droppedMismatched: 0,
+          droppedSensitive: 0,
+          sensitiveRejections: [],
+        }),
+      });
+    });
+
+    // Open JobStreet role-requirements page (stepper labels + non-_Q_ questions)
+    const atsPage = await ext.context.newPage();
+    const url = getRoleRequirementsUrl(server.port);
+    await atsPage.goto(url);
+    await atsPage.waitForLoadState('domcontentloaded');
+
+    // Bug 1: the panel lists the employer questions even though none carry _Q_ ids
+    await sidepanel.bringToFront();
+    await expect(sidepanel.locator('text=How many years of experience do you have?')).toBeVisible({ timeout: 7000 });
+    await expect(sidepanel.locator('text=Do you have experience automating tests?')).toBeVisible();
+    await expect(sidepanel.locator('text=Which English skills do you have?')).toBeVisible();
+
+    // Answer the fields explicitly, then click the non-submit Continue button
+    await atsPage.bringToFront();
+    await atsPage.locator('#years').selectOption({ label: '2 years' });
+    await atsPage.locator('input[name="automate"][value="PH_Q_7254_V_4_A_7256"]').check();
+    await atsPage.locator('input[name="english"][value="PH_Q_1_V_1_A_1"]').check();
+    await atsPage.locator('input[name="english"][value="PH_Q_1_V_2_A_2"]').check();
+    await atsPage.locator('#continue-btn').click();
+
+    // Bug 3: Continue (a non-submit button) still triggers capture
+    await sidepanel.bringToFront();
+    await expect(sidepanel.locator('text=Saved 3 answers to memory')).toBeVisible({ timeout: 7000 });
+
+    // Capture payload carries human text, never the opaque PH_Q_ tokens
+    expect(captureRequestBody).not.toBeNull();
+    expect(captureRequestBody.answers).toBeInstanceOf(Array);
+    expect(captureRequestBody.answers.length).toBeGreaterThanOrEqual(3);
+
+    const byLabel = (l: string) => captureRequestBody.answers.find((a: any) => a.questionLabel.includes(l));
+    expect(byLabel('How many years of experience do you have?')).toBeDefined();
+    expect(byLabel('How many years of experience do you have?').answerText).toBe('2 years');
+    expect(byLabel('Do you have experience automating tests?').answerText).toBe('Yes');
+    expect(byLabel('Which English skills do you have?').answerText).toBe('Speaks proficiently, Writes proficiently');
+
+    // No PH_Q_ tokens leak into any answer text or field identity
+    expect(JSON.stringify(captureRequestBody.answers)).not.toContain('PH_Q_');
   });
 
   test('Memory tab reactively refreshes and shows captured answers immediately without reload (D-2)', async () => {
