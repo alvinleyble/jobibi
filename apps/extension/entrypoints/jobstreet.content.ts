@@ -1,4 +1,4 @@
-import { extractJobStreetQuestions, verifySingleMapping, executeAutofill } from '@jobibi/shared';
+import { extractJobStreetQuestions, verifySingleMapping, executeAutofill, readHumanValue, readHumanCheckboxGroupValue } from '@jobibi/shared';
 import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload } from '@jobibi/shared';
 
 
@@ -78,19 +78,18 @@ export default defineContentScript({
     });
 
     // ---- S6 capture helpers (D16 + D12) ----
+    // Human-readable value resolution (Findings A & B): delegated to shared
+    // readHumanValue / readHumanCheckboxGroupValue. Checkbox groups are read
+    // as a joined ", " list rather than a single token.
     function readFieldValue(el: Element): string {
-      if (el instanceof HTMLTextAreaElement) return el.value;
-      if (el instanceof HTMLSelectElement) return el.value;
-      if (el instanceof HTMLInputElement) {
-        const t = el.type.toLowerCase();
-        if (t === 'checkbox' || t === 'radio') {
-          if (!el.checked) return '';
-          // For grouped checkboxes, read value; for radio, same
-          return el.value || (el.checked ? 'checked' : '');
-        }
-        return el.value;
+      if (el instanceof HTMLInputElement && el.type.toLowerCase() === 'checkbox' && el.getAttribute('name')) {
+        const gv = readHumanCheckboxGroupValue(el, document);
+        // gv is '' when none checked — matches previous "skip empty" contract
+        if (gv) return gv;
+        // fall through to single-elt handling so unchecked firstEl returns ''
+        // (group case with 0 checked is correctly '' even without this)
       }
-      return (el as HTMLElement).innerText ?? '';
+      return readHumanValue(el, document);
     }
 
     function getFieldElement(q: ExtractedQuestion): Element | null {
