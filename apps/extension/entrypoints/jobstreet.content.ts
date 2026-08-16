@@ -359,12 +359,16 @@ export default defineContentScript({
       'button[aria-label*="Review" i]',
       'button[aria-label*="Save" i]',
       'button[aria-label*="Update" i]',
+    ].join(', ');
+
+    // Broader matchers with no reliable intent signal on their own — only fire
+    // capture when the element's visible text also passes isSubmitText().
+    const BROAD_BUTTON_SELECTOR = [
+      'a[role="button"]',
       '[class*="submit" i]',
       '[class*="continue" i]',
       '[class*="next" i]',
       '[class*="review" i]',
-      'a[role="button"]',
-      'a[data-control-name="continue_unify"]',
     ].join(', ');
 
     const isSubmitText = (raw: string): boolean => {
@@ -394,6 +398,15 @@ export default defineContentScript({
       if (!target) return;
       const submitEl = target.closest(BUTTON_SELECTOR);
       if (submitEl) {
+        stashSnapshotIfAny();
+        scheduleCapture('click-submit', 300);
+        return;
+      }
+      // Broad matchers (a[role=button], generic submit/continue/next/review
+      // class substrings) have no reliable intent on their own — require the
+      // element's visible text to also look like a submission action.
+      const broadEl = target.closest(BROAD_BUTTON_SELECTOR);
+      if (broadEl && isSubmitText(broadEl.textContent ?? '')) {
         stashSnapshotIfAny();
         scheduleCapture('click-submit', 300);
         return;
