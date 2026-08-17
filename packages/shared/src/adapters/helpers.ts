@@ -55,13 +55,199 @@ export function escapeCss(s: string): string {
   return s.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`);
 }
 
+export function stripRequiredMarkers(text: string): string {
+  let s = text.trim();
+  let prev = '';
+  while (s !== prev) {
+    prev = s;
+    s = s
+      .replace(/\s*[\*:：]\s*$/g, '')
+      .replace(/\s*[\(\[\{]\s*(?:required|optional)\s*[\)\]\}]\s*$/gi, '')
+      .replace(/(?:^|[\s\u00a0]+|[\*:：])(?:required|optional)\s*$/gi, '')
+      .trim();
+  }
+  return s;
+}
+
+export function dedupeLabelText(txt: string): string {
+  let trimmed = txt.trim();
+  if (!trimmed) return '';
+
+  trimmed = stripRequiredMarkers(trimmed);
+
+  // 1. Direct regex repeated substring matching (2 or more concatenations, with or without spaces)
+  const repeatRegex = /^(.+?)(?:\s*\1)+$/i;
+  const match = trimmed.match(repeatRegex);
+  if (match && match[1]) {
+    const candidate = match[1].trim();
+    if (candidate.length >= 2) {
+      return candidate;
+    }
+  }
+
+  // 2. Normalized whitespace repeated substring matching
+  const normalized = trimmed.replace(/[\s\u00a0]+/g, ' ');
+  const normMatch = normalized.match(repeatRegex);
+  if (normMatch && normMatch[1]) {
+    const candidate = normMatch[1].trim();
+    if (candidate.length >= 2) {
+      return candidate;
+    }
+  }
+
+  // 3. Exact character-length slice tiling (2 to 6 equal parts)
+  const len = trimmed.length;
+  for (let parts = 2; parts <= 6; parts++) {
+    if (len >= parts * 2 && len % parts === 0) {
+      const partLen = len / parts;
+      const first = trimmed.slice(0, partLen);
+      let allMatch = true;
+      for (let p = 1; p < parts; p++) {
+        if (trimmed.slice(p * partLen, (p + 1) * partLen).toLowerCase() !== first.toLowerCase()) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch && first.trim().length >= 2) {
+        return first.trim();
+      }
+    }
+  }
+
+  // 4. Word-based equal division (2 to 6 equal parts)
+  const words = normalized.split(' ');
+  for (let parts = 2; parts <= 6; parts++) {
+    if (words.length >= parts && words.length % parts === 0) {
+      const chunkSize = words.length / parts;
+      const firstChunk = words.slice(0, chunkSize).join(' ');
+      let allMatch = true;
+      for (let p = 1; p < parts; p++) {
+        const chunk = words.slice(p * chunkSize, (p + 1) * chunkSize).join(' ');
+        if (chunk.toLowerCase() !== firstChunk.toLowerCase()) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch && firstChunk.trim().length >= 2) {
+        return firstChunk.trim();
+      }
+    }
+  }
+
+  return trimmed;
+}
+
 export function cleanLabel(text: string): string {
-  return text
+  if (!text) return '';
+  const collapsed = text.replace(/[\s\u00a0]+/g, ' ').trim();
+  const stripped = stripRequiredMarkers(collapsed);
+  return dedupeLabelText(stripped);
+}
+
+export const CONTACT_INFO_EXACT = new Set([
+  // Phone
+  'phone',
+  'phone number',
+  'mobile phone',
+  'mobile phone number',
+  'mobile number',
+  'mobile',
+  'cell phone',
+  'cell phone number',
+  'telephone',
+  'telephone number',
+  'contact number',
+  'phone country code',
+  'country code',
+  'country phone code',
+  'phone code',
+  'phone type',
+  'phone device type',
+  'work phone',
+  'home phone',
+
+  // Email
+  'email',
+  'email address',
+  'e-mail',
+  'e-mail address',
+  'contact email',
+  'primary email',
+
+  // Name
+  'first name',
+  'last name',
+  'full name',
+  'given name',
+  'family name',
+  'surname',
+  'middle name',
+  'legal name',
+  'preferred name',
+
+  // Location / Address
+  'city',
+  'location',
+  'location (city)',
+  'location city',
+  'location (city, state)',
+  'street address',
+  'street',
+  'address',
+  'address line 1',
+  'address line 2',
+  'home address',
+  'current address',
+  'current location',
+  'city, state',
+  'city state',
+  'state',
+  'province',
+  'state / province',
+  'state/province',
+  'state province',
+  'zip code',
+  'postal code',
+  'zip',
+  'zip / postal code',
+  'zip/postal code',
+  'zip postal code',
+  'country',
+  'country / region',
+  'country/region',
+  'country region',
+  'region',
+
+  // Profile / Header fields that appear on contact info step
+  'headline',
+  'summary',
+]);
+
+export function isContactInfoLabel(label: string): boolean {
+  if (!label) return false;
+  const cleaned = cleanLabel(label);
+  const deduped = dedupeLabelText(cleaned);
+
+  const low = deduped.toLowerCase().trim();
+  if (CONTACT_INFO_EXACT.has(low)) return true;
+
+  const punctNormalized = low
+    .replace(/[\(\)\[\]\{\}\/\\,:\.\-_]+/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\s*[\*:：:]\s*$/, '')
-    .replace(/\s*\(required\)\s*$/i, '')
     .trim();
+  if (CONTACT_INFO_EXACT.has(punctNormalized)) return true;
+
+  const withoutParens = low
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(/\s*\[[^\]]*\]\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (withoutParens && CONTACT_INFO_EXACT.has(withoutParens)) return true;
+
+  const stripped = stripRequiredMarkers(low);
+  if (CONTACT_INFO_EXACT.has(stripped)) return true;
+
+  return false;
 }
 
 export function fieldSelector(el: Element): string {
