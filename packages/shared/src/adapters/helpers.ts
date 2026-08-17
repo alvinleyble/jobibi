@@ -63,7 +63,10 @@ export function stripRequiredMarkers(text: string): string {
     s = s
       .replace(/\s*[\*:：]\s*$/g, '')
       .replace(/\s*[\(\[\{]\s*(?:required|optional)\s*[\)\]\}]\s*$/gi, '')
-      .replace(/(?:^|[\s\u00a0]+|[\*:：])(?:required|optional)\s*$/gi, '')
+      // Bare trailing "Required"/"Optional" is only recognized title-cased, the
+      // way LinkedIn renders its own marker — a real label ending in the
+      // lowercase word (e.g. "Visa sponsorship required") must survive.
+      .replace(/(?:^|[\s\u00a0]+|[\*:：])(?:Required|Optional)\s*$/g, '')
       .trim();
   }
   return s;
@@ -92,45 +95,6 @@ export function dedupeLabelText(txt: string): string {
     const candidate = normMatch[1].trim();
     if (candidate.length >= 2) {
       return candidate;
-    }
-  }
-
-  // 3. Exact character-length slice tiling (2 to 6 equal parts)
-  const len = trimmed.length;
-  for (let parts = 2; parts <= 6; parts++) {
-    if (len >= parts * 2 && len % parts === 0) {
-      const partLen = len / parts;
-      const first = trimmed.slice(0, partLen);
-      let allMatch = true;
-      for (let p = 1; p < parts; p++) {
-        if (trimmed.slice(p * partLen, (p + 1) * partLen).toLowerCase() !== first.toLowerCase()) {
-          allMatch = false;
-          break;
-        }
-      }
-      if (allMatch && first.trim().length >= 2) {
-        return first.trim();
-      }
-    }
-  }
-
-  // 4. Word-based equal division (2 to 6 equal parts)
-  const words = normalized.split(' ');
-  for (let parts = 2; parts <= 6; parts++) {
-    if (words.length >= parts && words.length % parts === 0) {
-      const chunkSize = words.length / parts;
-      const firstChunk = words.slice(0, chunkSize).join(' ');
-      let allMatch = true;
-      for (let p = 1; p < parts; p++) {
-        const chunk = words.slice(p * chunkSize, (p + 1) * chunkSize).join(' ');
-        if (chunk.toLowerCase() !== firstChunk.toLowerCase()) {
-          allMatch = false;
-          break;
-        }
-      }
-      if (allMatch && firstChunk.trim().length >= 2) {
-        return firstChunk.trim();
-      }
     }
   }
 
@@ -217,18 +181,33 @@ export const CONTACT_INFO_EXACT = new Set([
   'country/region',
   'country region',
   'region',
+]);
 
-  // Profile / Header fields that appear on contact info step
-  'headline',
-  'summary',
+// Subset of CONTACT_INFO_EXACT safe to match after stripping a parenthetical/
+// bracketed qualifier. Kept narrower than the full set so a qualified employer
+// question (e.g. "Summary (250 words max)") can't reduce to a generic word
+// like "summary" and be misclassified as a contact-info field.
+const CONTACT_INFO_PAREN_STRIPPED_KEYS = new Set([
+  'city',
+  'location',
+  'street',
+  'street address',
+  'address',
+  'home address',
+  'current address',
+  'current location',
+  'country',
+  'state',
+  'province',
+  'region',
+  'zip',
+  'zip code',
+  'postal code',
 ]);
 
 export function isContactInfoLabel(label: string): boolean {
   if (!label) return false;
-  const cleaned = cleanLabel(label);
-  const deduped = dedupeLabelText(cleaned);
-
-  const low = deduped.toLowerCase().trim();
+  const low = cleanLabel(label).toLowerCase().trim();
   if (CONTACT_INFO_EXACT.has(low)) return true;
 
   const punctNormalized = low
@@ -242,10 +221,7 @@ export function isContactInfoLabel(label: string): boolean {
     .replace(/\s*\[[^\]]*\]\s*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (withoutParens && CONTACT_INFO_EXACT.has(withoutParens)) return true;
-
-  const stripped = stripRequiredMarkers(low);
-  if (CONTACT_INFO_EXACT.has(stripped)) return true;
+  if (withoutParens && CONTACT_INFO_PAREN_STRIPPED_KEYS.has(withoutParens)) return true;
 
   return false;
 }
