@@ -686,4 +686,101 @@ describe('extractLinkedInQuestions', () => {
     // Either outcome is 0 — the key invariant is resume not surfaced as question.
     expect(res.questions).toHaveLength(0);
   });
+
+  it('regression: no-separator doubled contact info (Phone country code, Location (city)) does not trigger Additional Questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <label for="pcc">Phone country codePhone country code</label>
+              <select id="pcc" name="phoneCountryCode"><option>United States (+1)</option></select>
+            </div>
+          </div>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <label for="loc">Location (city)Location (city)</label>
+              <input id="loc" name="city" type="text" />
+            </div>
+          </div>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>Mobile phone numberMobile phone number Required</div>
+              <input name="phone" type="tel" />
+            </div>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('regression: no-separator doubled contact info inside shadow root is skipped', () => {
+    const doc = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>Phone country codePhone country code</div>
+              <select name="countryCode"><option>Philippines (+63)</option></select>
+            </div>
+          </div>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <div>Location (city)Location (city)\nRequired</div>
+              <input name="location" type="text" />
+            </div>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('regression: doubled question text with trailing Required marker in Additional Questions is correctly extracted and deduped', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <div class="artdeco-text-input">
+              <label for="tools">What are the testing tools and methods have you worked with?What are the testing tools and methods have you worked with? Required</label>
+              <textarea id="tools" name="tools"></textarea>
+            </div>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(1);
+    expect(res.questions[0].label).toBe(
+      'What are the testing tools and methods have you worked with?',
+    );
+  });
+
+  it('regression: various spacing and tiling variations in questions are deduped properly', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="q1">Tell us about your background Tell us about your background *</label>
+            <textarea id="q1" name="q1"></textarea>
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="q2">Why do you want to join our team?Why do you want to join our team?\nRequired</label>
+            <textarea id="q2" name="q2"></textarea>
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(2);
+    expect(res.questions[0].label).toBe('Tell us about your background');
+    expect(res.questions[1].label).toBe('Why do you want to join our team?');
+  });
 });

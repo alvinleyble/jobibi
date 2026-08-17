@@ -29,7 +29,15 @@ export { extractJobStreetQuestions } from './adapters/jobstreet.ts';
 export { extractLinkedInQuestions } from './adapters/linkedin.ts';
 export { extractIndeedQuestions, INDEED_QUESTIONS_MODULE_PATH_RE } from './adapters/indeed.ts';
 export { extractGenericQuestions } from './adapters/generic.ts';
-export { CONFIDENCE_BY_SOURCE, FIELD_SELECTOR } from './adapters/helpers.ts';
+export {
+  CONFIDENCE_BY_SOURCE,
+  FIELD_SELECTOR,
+  cleanLabel,
+  stripRequiredMarkers,
+  dedupeLabelText,
+  isContactInfoLabel,
+  CONTACT_INFO_EXACT,
+} from './adapters/helpers.ts';
 
 // Capture helpers (S6) — lightweight, safe for extension bundle
 export {

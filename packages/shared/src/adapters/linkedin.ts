@@ -6,6 +6,8 @@ import {
   isVisible as isVisibleBase,
   escapeCss,
   cleanLabel,
+  dedupeLabelText,
+  isContactInfoLabel,
   fieldSelector,
   fieldId,
   resolveLabel,
@@ -142,56 +144,6 @@ function extractLinkedInJobContext(root: ParentNode): JobContext {
 
 const STEP_MARKER_SELECTOR =
   '.fb-dash-form-element, .fb-form-element, .jobs-easy-apply-form-element, [data-test-text-entity-list-form-component], [data-test-form-element]';
-
-const CONTACT_INFO_EXACT = new Set([
-  'phone',
-  'phone number',
-  'mobile phone number',
-  'email',
-  'email address',
-  'city',
-  'street address',
-  'state',
-  'province',
-  'zip code',
-  'postal code',
-  'country',
-  'first name',
-  'last name',
-  'full name',
-  'address',
-  'location',
-  'home address',
-]);
-
-// Helper: deduplicate doubled labels like "Email addressEmail address"
-// (can occur when container's textContent concatenates two identical label nodes
-// without a separator, or via cloned text). Also handles spaced double.
-function dedupeLabelText(txt: string): string {
-  const trimmed = txt.trim();
-  if (trimmed.length >= 2 && trimmed.length % 2 === 0) {
-    const half = trimmed.length / 2;
-    const a = trimmed.slice(0, half);
-    const b = trimmed.slice(half);
-    if (a.toLowerCase() === b.toLowerCase()) return a.trim();
-  }
-  const words = trimmed.split(/\s+/);
-  if (words.length >= 2 && words.length % 2 === 0) {
-    const halfW = words.length / 2;
-    const first = words.slice(0, halfW).join(' ');
-    const second = words.slice(halfW).join(' ');
-    if (first.toLowerCase() === second.toLowerCase()) return first.trim();
-  }
-  return trimmed;
-}
-
-function isContactInfoLabel(label: string): boolean {
-  const low = label.toLowerCase().trim();
-  if (CONTACT_INFO_EXACT.has(low)) return true;
-  const deduped = dedupeLabelText(label).toLowerCase().trim();
-  if (deduped !== low && CONTACT_INFO_EXACT.has(deduped)) return true;
-  return false;
-}
 
 function isResumePickerLabel(label: string, field: Element): boolean {
   const low = label.toLowerCase();
