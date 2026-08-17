@@ -207,17 +207,21 @@ Deno.serve(async (req) => {
         if (ans.mappingVerified !== true) {
           droppedMismatched++;
           // also log this specific drop if not already in mismatches
-          const { error: logErr } = await supabase.from('capture_mismatches').insert({
-            user_id: user.id,
-            application_id: applicationId,
-            question_label: ans.questionLabel,
-            original_mapping: ans.fieldSelector ? { selector: ans.fieldSelector, id: ans.fieldId } : null,
-            rederived_mapping: null,
-            reason: ans.mismatchReason ?? (ans.mappingVerified === false
-              ? 'mapping mismatch (client-verified false)'
-              : 'mapping verification missing (fail-closed)'),
-          });
-          if (logErr) console.warn('[capture] mismatch log failed', logErr);
+          try {
+            const { error: logErr } = await supabase.from('capture_mismatches').insert({
+              user_id: user.id,
+              application_id: applicationId,
+              question_label: ans.questionLabel,
+              original_mapping: ans.fieldSelector ? { selector: ans.fieldSelector, id: ans.fieldId } : null,
+              rederived_mapping: null,
+              reason: ans.mismatchReason ?? (ans.mappingVerified === false
+                ? 'mapping mismatch (client-verified false)'
+                : 'mapping verification missing (fail-closed)'),
+            });
+            if (logErr) console.warn('[capture] mismatch log failed', logErr);
+          } catch (logExc) {
+            console.warn('[capture] mismatch log exception', logExc);
+          }
           continue;
         }
 
