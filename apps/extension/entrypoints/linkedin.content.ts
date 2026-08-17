@@ -366,13 +366,17 @@ export default defineContentScript({
     ].join(', ');
 
     // Broader matchers with no reliable intent signal on their own — only fire
-    // capture when the element's visible text also passes isSubmitText().
+    // capture when the element's own label text also passes isSubmitText().
+    // Every entry is scoped to an interactive control: a bare class-substring
+    // match walks up the composed path into layout ancestors (e.g. a review
+    // panel whose textContent contains "Review your application"), which would
+    // stash a snapshot and run a full extraction on any stray click inside it.
+    const INTERACTIVE_TAGS = ['button', 'input', 'a[role="button"]', '[role="button"]'];
     const BROAD_BUTTON_SELECTOR = [
       'a[role="button"]',
-      '[class*="submit" i]',
-      '[class*="continue" i]',
-      '[class*="next" i]',
-      '[class*="review" i]',
+      ...['submit', 'continue', 'next', 'review'].flatMap((word) =>
+        INTERACTIVE_TAGS.map((tag) => `${tag}[class*="${word}" i]`),
+      ),
     ].join(', ');
 
     const isSubmitText = (raw: string): boolean => {
@@ -380,6 +384,16 @@ export default defineContentScript({
       if (/^(submit|continue|next|update|save|save and continue|review|done|next step|submit application|review application)$/.test(t)) return true;
       // Contains-match with a step indicator ("Continue to next step", "Review →").
       return /(^|\s)(continue|review|next|submit|save|update)(\s|$|\(|•|→|›|:)/.test(t);
+    };
+
+    // The control's own label: aria-label, then its value (inputs have no
+    // textContent), then its text. Never an ancestor's subtree text.
+    const controlLabelText = (el: Element): string => {
+      const aria = el.getAttribute?.('aria-label');
+      if (aria) return aria;
+      const value = (el as HTMLInputElement).value;
+      if (el.tagName === 'INPUT' && value) return value;
+      return el.textContent ?? '';
     };
 
     // Take the eager pre-navigation snapshot once per user action.
@@ -419,14 +433,14 @@ export default defineContentScript({
       // class substrings) have no reliable intent on their own — require the
       // element's visible text to also look like a submission action.
       const broadEl = findInComposedPath(e, BROAD_BUTTON_SELECTOR);
-      if (broadEl && isSubmitText(broadEl.textContent ?? '')) {
+      if (broadEl && isSubmitText(controlLabelText(broadEl))) {
         stashSnapshotIfAny();
         scheduleCapture('click-submit', 300);
         return;
       }
       // textContent fallback for ATS-specific labels (Update, Save, Review, etc.)
       const btn = findInComposedPath(e, 'button, input[type="submit"], a[role="button"]');
-      if (btn && isSubmitText(btn.textContent ?? '')) {
+      if (btn && isSubmitText(controlLabelText(btn))) {
         stashSnapshotIfAny();
         scheduleCapture('click-text-match', 300);
       }

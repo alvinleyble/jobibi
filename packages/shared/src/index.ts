@@ -51,6 +51,7 @@ export type { QaOrigin, OriginResult, MappingVerifyResult, QaPairRow, MemoryChun
 export { readHumanValue, readHumanCheckboxGroupValue } from './capture/readHumanValue.ts';
 export {
   isSameApplication,
+  isStaleStepMismatch,
   resolveCapturePayload,
   defaultJobKeyFromUrl,
   linkedInJobKeyFromUrl,
