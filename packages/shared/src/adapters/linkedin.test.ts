@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { extractLinkedInQuestions } from './linkedin.ts';
+import {
+  extractLinkedInQuestions,
+  isReviewStep,
+  isContactInfoStep,
+  isConsentOrFollowLabel,
+  isAdditionalQuestionsStep,
+} from './linkedin.ts';
 
 function dom(html: string) {
   const jsdom = new JSDOM(html);
@@ -783,4 +789,213 @@ describe('extractLinkedInQuestions', () => {
     expect(res.questions[0].label).toBe('Tell us about your background');
     expect(res.questions[1].label).toBe('Why do you want to join our team?');
   });
+
+  // ---------------------------------------------------------------------------
+  // Review Step & Contact Info Step Guards (Decisions Q4 & Q5)
+  // ---------------------------------------------------------------------------
+
+  describe('isReviewStep & isContactInfoStep detectors', () => {
+    it('isReviewStep detects review headings and markers', () => {
+      const doc1 = dom('<div class="jobs-easy-apply-modal"><h3>Review your application</h3></div>');
+      expect(isReviewStep(doc1.querySelector('.jobs-easy-apply-modal')!)).toBe(true);
+
+      const doc2 = dom('<div class="jobs-easy-apply-modal"><h3 class="t-16">Review</h3></div>');
+      expect(isReviewStep(doc2.querySelector('.jobs-easy-apply-modal')!)).toBe(true);
+
+      const doc3 = dom('<div class="jobs-easy-apply-modal" data-test-easy-apply-review-step></div>');
+      expect(isReviewStep(doc3.querySelector('.jobs-easy-apply-modal')!)).toBe(true);
+
+      const doc4 = dom('<div class="jobs-easy-apply-modal" data-easy-apply-step="review"></div>');
+      expect(isReviewStep(doc4.querySelector('.jobs-easy-apply-modal')!)).toBe(true);
+
+      const doc5 = dom('<div class="jobs-easy-apply-modal"><h3>Additional Questions</h3></div>');
+      expect(isReviewStep(doc5.querySelector('.jobs-easy-apply-modal')!)).toBe(false);
+    });
+
+    it('isContactInfoStep detects contact info headings and markers', () => {
+      const doc1 = dom('<div class="jobs-easy-apply-modal"><h3>Contact info</h3></div>');
+      expect(isContactInfoStep(doc1.querySelector('.jobs-easy-apply-modal')!)).toBe(true);
+
+      const doc2 = dom('<div class="jobs-easy-apply-modal"><h3 class="t-16">Contact information</h3></div>');
+      expect(isContactInfoStep(doc2.querySelector('.jobs-easy-apply-modal')!)).toBe(true);
+
+      const doc3 = dom('<div class="jobs-easy-apply-modal" data-easy-apply-step="contact-info"></div>');
+      expect(isContactInfoStep(doc3.querySelector('.jobs-easy-apply-modal')!)).toBe(true);
+
+      const doc4 = dom('<div class="jobs-easy-apply-modal"><h3>Additional Questions</h3></div>');
+      expect(isContactInfoStep(doc4.querySelector('.jobs-easy-apply-modal')!)).toBe(false);
+    });
+
+    it('isConsentOrFollowLabel matches follow company and consent labels', () => {
+      expect(isConsentOrFollowLabel('Follow Conjointly to stay up to date with their page')).toBe(true);
+      expect(isConsentOrFollowLabel('Follow Acme Corp to stay up to date with their page')).toBe(true);
+      expect(isConsentOrFollowLabel('Follow Acme to stay up to date')).toBe(true);
+      expect(isConsentOrFollowLabel('Follow Acme Inc.')).toBe(true);
+      expect(isConsentOrFollowLabel('I agree to the terms and conditions')).toBe(true);
+      expect(isConsentOrFollowLabel('I consent to the collection and processing of my personal data')).toBe(true);
+      expect(isConsentOrFollowLabel('By submitting, you agree to the privacy policy')).toBe(true);
+      expect(isConsentOrFollowLabel('I acknowledge all entries are accurate')).toBe(true);
+
+      // Does not match genuine screening questions
+      expect(isConsentOrFollowLabel('Why do you want to work at Conjointly?')).toBe(false);
+      expect(isConsentOrFollowLabel('How many years of QA experience do you have?')).toBe(false);
+      expect(isConsentOrFollowLabel('Cover letter')).toBe(false);
+      expect(isConsentOrFollowLabel('Do you have experience with Playwright?')).toBe(false);
+    });
+
+    it('isAdditionalQuestionsStep returns false on review or contact info step', () => {
+      const reviewDoc = dom(`
+        <div class="jobs-easy-apply-modal">
+          <h3>Review your application</h3>
+          <div class="fb-dash-form-element">
+            <label for="follow">Follow Conjointly to stay up to date with their page</label>
+            <input id="follow" type="checkbox" checked />
+          </div>
+        </div>
+      `);
+      expect(isAdditionalQuestionsStep(reviewDoc.querySelector('.jobs-easy-apply-modal')!)).toBe(false);
+
+      const contactDoc = dom(`
+        <div class="jobs-easy-apply-modal">
+          <h3>Contact info</h3>
+          <div class="fb-dash-form-element">
+            <label for="phone">Phone number</label>
+            <input id="phone" type="tel" />
+          </div>
+        </div>
+      `);
+      expect(isAdditionalQuestionsStep(contactDoc.querySelector('.jobs-easy-apply-modal')!)).toBe(false);
+    });
+  });
+
+  it('Review step fixture with Follow Company checkbox returns 0 questions', () => {
+    const doc = dom(`
+      <html><body>
+        <div id="artdeco-modal-outlet">
+          <div class="artdeco-modal artdeco-modal--is-open jobs-easy-apply-modal" role="dialog">
+            <div class="jobs-easy-apply-modal__content">
+              <h3 class="t-16">Review your application</h3>
+              <div class="jobs-easy-apply-form-section">
+                <h4>Contact info</h4>
+                <p>Jane Doe</p>
+                <p>jane@example.com</p>
+              </div>
+              <div class="jobs-easy-apply-form-section">
+                <div class="fb-dash-form-element">
+                  <label for="follow-company">Follow Conjointly to stay up to date with their page</label>
+                  <input id="follow-company" type="checkbox" checked />
+                </div>
+              </div>
+              <button type="submit">Submit application</button>
+            </div>
+          </div>
+        </div>
+      </body></html>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('Review step fixture with consent checkbox returns 0 questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Review</h3>
+        <div class="fb-dash-form-element">
+          <label for="consent-check">I agree to the terms and data privacy policy</label>
+          <input id="consent-check" type="checkbox" />
+        </div>
+        <button>Submit application</button>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('Review step inside open shadow DOM with Follow Company checkbox returns 0 questions', () => {
+    const doc = domWithInteropShadow(`
+      <div role="dialog" class="artdeco-modal jobs-easy-apply-modal">
+        <div class="jobs-easy-apply-modal__content">
+          <h3 class="t-16">Review your application</h3>
+          <div class="fb-dash-form-element">
+            <label for="follow-c">Follow Acme to stay up to date with their page</label>
+            <input id="follow-c" type="checkbox" checked />
+          </div>
+          <button>Submit application</button>
+        </div>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('Contact Info step fixture returns 0 questions (structural guard)', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Contact info</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="p">Phone number</label>
+            <input id="p" name="phone" type="tel" />
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="e">Email address</label>
+            <input id="e" name="email" type="email" />
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="custom">Something that looks like a question or long text</label>
+            <input id="custom" name="custom" type="text" />
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('Contact Information step with marker returns 0 questions', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal" data-easy-apply-step="contact-info">
+        <h3 class="t-16">Contact information</h3>
+        <form>
+          <label for="city">City</label>
+          <input id="city" name="city" type="text" />
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(0);
+  });
+
+  it('Genuine employer screening questions containing ? on Additional Questions step are preserved and extracted', () => {
+    const doc = dom(`
+      <div class="jobs-easy-apply-modal">
+        <h3>Additional Questions</h3>
+        <form>
+          <div class="fb-dash-form-element">
+            <label for="q1">Why do you want to work at this company?</label>
+            <textarea id="q1" name="whyCompany"></textarea>
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="q2">Do you consent to a background verification check?</label>
+            <select id="q2" name="bgCheck">
+              <option value="">Select an option</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+          <div class="fb-dash-form-element">
+            <label for="q3">How many years of QA automation experience do you have?</label>
+            <input id="q3" name="qaYears" type="text" />
+          </div>
+        </form>
+      </div>
+    `);
+    const res = extractLinkedInQuestions(doc);
+    expect(res.questions).toHaveLength(3);
+    const labels = res.questions.map((q) => q.label);
+    expect(labels).toContain('Why do you want to work at this company?');
+    expect(labels).toContain('Do you consent to a background verification check?');
+    expect(labels).toContain('How many years of QA automation experience do you have?');
+  });
 });
+

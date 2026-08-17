@@ -172,6 +172,11 @@
   3. **Tests**: `helpers.test.ts` (16 new tests) and `linkedin.test.ts` gained fixtures for concatenated-label dedup and contact-info matching.
   4. **Verification**: `packages/shared` unit tests pass (102 in `src/adapters`), `tsc --noEmit` clean, `deno lint` clean.
 
+- 2026-08-18 — **LinkedIn Review-step consent/follow filtering & Contact Info step guard** on branch `fm/jobibi-review-step-filtering`. Fixes false employer-question signals on the Review step (`"Follow Acme to stay up to date with their page"`, `"I agree to the terms and conditions"`) and closes a gap where the Contact Info step could still surface fields if it lacked the header text `isAdditionalQuestionsStep` previously relied on.
+  1. **New detectors in `linkedin.ts`, exported from the barrel**: `isReviewStep`/`isContactInfoStep` (marker attributes or heading-text heuristics) and `isConsentOrFollowLabel` (follow-company and consent/T&C/privacy-policy label patterns). `isAdditionalQuestionsStep` and `extractLinkedInQuestions` both short-circuit to zero questions on either step; `hasEmployerQuestionSignal` also excludes consent/follow labels so they can't produce a false signal on any step. Genuine screening questions (free-text or yes/no) on Additional Questions steps are unaffected.
+  2. **Tests**: `linkedin.test.ts` gained fixtures for the two step detectors, label matching, and the combined guard behavior.
+  3. **Verification**: `packages/shared` unit tests pass, `tsc --noEmit` clean.
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.
