@@ -1,10 +1,4 @@
-import type {
-  ExtractedQuestion,
-  ExtractionResult,
-  FieldType,
-  JobContext,
-  LabelSource,
-} from './types.ts';
+import type { ExtractedQuestion, ExtractionResult, JobContext } from './types.ts';
 
 import {
   CONFIDENCE_BY_SOURCE,
@@ -13,7 +7,6 @@ import {
   isVisible,
   escapeCss,
   cleanLabel,
-  stripRequiredMarkers,
   fieldSelector,
   fieldId,
   resolveLabel,
