@@ -49,6 +49,20 @@ export {
 } from './capture/capture.ts';
 export type { QaOrigin, OriginResult, MappingVerifyResult, QaPairRow, MemoryChunkRow, QaGroup } from './capture/capture.ts';
 export { readHumanValue, readHumanCheckboxGroupValue } from './capture/readHumanValue.ts';
+export {
+  isSameApplication,
+  isStaleStepMismatch,
+  resolveCapturePayload,
+  defaultJobKeyFromUrl,
+  linkedInJobKeyFromUrl,
+} from './capture/captureSnapshot.ts';
+export type {
+  CaptureAnswerEntry,
+  CaptureMismatch,
+  CaptureSnapshot,
+  ResolvedCapturePayload,
+  JobKeyFromUrl,
+} from './capture/captureSnapshot.ts';
 export { normalizeQuestion } from './gate/normalize.ts';
 
 // Style profile (S9) — lightweight, safe for extension bundle (no ingestion deps)

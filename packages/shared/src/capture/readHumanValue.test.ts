@@ -213,6 +213,80 @@ describe('readHumanCheckboxGroupValue', () => {
     const el = doc.getElementById('solo')!;
     expect(readHumanCheckboxGroupValue(el, doc)).toBe('Solo label');
   });
+
+  it('resolves a large (~15-box) group joined in document order', () => {
+    const options = [
+      'Automatic testing',
+      'Black-box testing',
+      'White-box testing',
+      'Unit testing',
+      'Integration testing',
+      'Regression testing',
+      'Smoke testing',
+      'API testing',
+      'Load testing',
+      'Performance testing',
+      'Security testing',
+      'Cross-browser testing',
+      'Mobile testing',
+      'Accessibility testing',
+      'Usability testing',
+    ];
+    const html = options
+      .map(
+        (opt, i) =>
+          `<input type="checkbox" id="t${i}" name="testing_tools" value="${opt}"${i % 2 === 0 ? ' checked' : ''}><label for="t${i}">${opt}</label>`,
+      )
+      .join('\n');
+    const doc = dom(html);
+    promoteGlobalsFrom(doc);
+    const first = doc.getElementById('t0')!;
+    const expected = options.filter((_, i) => i % 2 === 0).join(', ');
+    expect(options).toHaveLength(15);
+    expect(readHumanCheckboxGroupValue(first, doc)).toBe(expected);
+  });
+
+  it('resolves a large (~15-box) group across a shadow-root boundary via label[for]', () => {
+    const options = [
+      'Automatic testing',
+      'Black-box testing',
+      'White-box testing',
+      'Unit testing',
+      'Integration testing',
+      'Regression testing',
+      'Smoke testing',
+      'API testing',
+      'Load testing',
+      'Performance testing',
+      'Security testing',
+      'Cross-browser testing',
+      'Mobile testing',
+      'Accessibility testing',
+      'Usability testing',
+    ];
+    const doc = dom(`<html><body><div id="interop-outlet"></div></body></html>`);
+    const host = doc.getElementById('interop-outlet') as unknown as { attachShadow: (o: { mode: string }) => ShadowRoot };
+    const sr = host.attachShadow({ mode: 'open' }) as unknown as ParentNode & { innerHTML: string };
+    (sr as unknown as { innerHTML: string }).innerHTML = `
+      <fieldset>
+        <legend>What are the testing tools and methods have you worked with?</legend>
+        ${options
+          .map(
+            (opt, i) =>
+              `<input type="checkbox" id="st${i}" name="testing_tools" value="${opt}"${i % 2 === 0 ? ' checked' : ''}><label for="st${i}">${opt}</label>`,
+          )
+          .join('\n')}
+      </fieldset>
+    `;
+    promoteGlobalsFrom(doc);
+    // The first checkbox lives inside the shadow root.
+    const first = (sr as unknown as Document).querySelector('#st0') as Element;
+    // Reading against document must find nothing (shadow content is not pierced).
+    expect(readHumanCheckboxGroupValue(first, doc)).toBe('');
+    // Reading against the shadow root resolves label[for] across the boundary.
+    const expected = options.filter((_, i) => i % 2 === 0).join(', ');
+    expect(readHumanCheckboxGroupValue(first, sr)).toBe(expected);
+  });
 });
 
 describe('readHumanValue — text inputs passthrough', () => {
