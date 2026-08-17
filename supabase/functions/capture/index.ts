@@ -2,6 +2,9 @@
 // Stores each submitted answer in qa_pairs with draft_text, origin, edit_distance.
 // Also chunks into memory_chunks for future retrieval.
 // Verifies mapping via client-provided verification flag; drops mismatched writes.
+// Response truthfulness: once any answer row is written, the response is a 200
+// carrying insertedIds — a later failure (including the runtime's compute limit)
+// must never be reported as a save that did not happen.
 
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
@@ -373,4 +376,3 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'An unexpected error occurred while saving your application answers. Please try again.' }, 500);
   }
 });
-

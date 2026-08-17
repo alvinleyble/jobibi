@@ -1,3 +1,10 @@
+// S9 — shared voice-corpus trigger check, called from every write path
+// (capture, gap-answer, manual-input, ingest). Only checks the delta and
+// fires a fire-and-forget POST; style-profile itself owns the atomic
+// claim/in-flight check, so this never touches style_profile.rebuilding.
+// Callers use triggerStyleProfileRebuildInBackground so the check runs off
+// the response path (D19) — the save must not wait on it, and a failure here
+// must never turn a successful save into an error.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { VOICE_CORPUS_TRIGGER_DELTA, dispatchBackgroundRebuild } from '../../../packages/shared/src/styleProfile/styleProfile.ts';
 
@@ -42,5 +49,3 @@ export function triggerStyleProfileRebuildInBackground(
     runtime,
   );
 }
-
-
