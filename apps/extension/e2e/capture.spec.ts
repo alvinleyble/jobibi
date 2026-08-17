@@ -202,7 +202,8 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
     await atsPage.bringToFront();
     await atsPage.locator('#tool-0').check(); // Automatic testing
     await atsPage.locator('#tool-1').check(); // Black-box testing
-    await atsPage.locator('#urn:li:fs_easyApplyFormElement:text').fill('I built a parallel CI lane that halved suite runtime.');
+    // Attribute form: the LinkedIn id contains colons, which are not valid in a #id CSS selector.
+    await atsPage.locator('[id="urn:li:fs_easyApplyFormElement:text"]').fill('I built a parallel CI lane that halved suite runtime.');
 
     // Click Next — the SPA swaps the questions step for Review before the
     // deferred capture runs, so only the eager click snapshot can save this step.
