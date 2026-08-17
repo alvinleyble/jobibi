@@ -26,7 +26,13 @@ export type {
   MappingConfidence,
 } from './adapters/types.ts';
 export { extractJobStreetQuestions } from './adapters/jobstreet.ts';
-export { extractLinkedInQuestions } from './adapters/linkedin.ts';
+export {
+  extractLinkedInQuestions,
+  isReviewStep,
+  isContactInfoStep,
+  isConsentOrFollowLabel,
+  isAdditionalQuestionsStep,
+} from './adapters/linkedin.ts';
 export { extractIndeedQuestions, INDEED_QUESTIONS_MODULE_PATH_RE } from './adapters/indeed.ts';
 export { extractGenericQuestions } from './adapters/generic.ts';
 export {

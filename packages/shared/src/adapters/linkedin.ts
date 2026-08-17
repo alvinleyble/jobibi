@@ -191,6 +191,174 @@ function resolveLinkedInLabel(
   return primary;
 }
 
+export function isConsentOrFollowLabel(label: string): boolean {
+  if (!label) return false;
+  const low = cleanLabel(label).toLowerCase().trim();
+
+  // Follow patterns:
+  // "Follow Conjointly to stay up to date with their page"
+  // "Follow Acme to stay up to date"
+  // "Follow Acme Corp to stay up to date with their page"
+  // "Follow Acme"
+  if (/^follow\s+/i.test(low)) {
+    if (
+      low.includes('to stay up to date') ||
+      low.includes('stay up to date') ||
+      low.includes('their page') ||
+      low.includes('on linkedin') ||
+      low.includes('company page') ||
+      /^follow\s+[a-z0-9&.,'\s-]+$/i.test(low)
+    ) {
+      return true;
+    }
+  }
+
+  // Consent / agreement / acknowledgement patterns:
+  if (
+    /^i\s+(agree|consent|acknowledge|confirm|declare|certify|authorize|authorise)\b/i.test(low) ||
+    /^agree\s+to\b/i.test(low) ||
+    /^consent\s+to\b/i.test(low) ||
+    /^by\s+(submitting|applying|clicking)\b/i.test(low) ||
+    /terms\s+(and|&)\s+conditions/i.test(low) ||
+    /privacy\s+policy/i.test(low) ||
+    /data\s+(processing|privacy)\s+terms/i.test(low)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function isReviewHeadingText(text: string): boolean {
+  if (!text) return false;
+  const t = text.trim().toLowerCase();
+  if (t === 'review' || t === 'review application' || t === 'review your application') return true;
+  if (t === 'review and submit' || t === 'application review' || t === 'please review your application') return true;
+  if (/^review(\s+(your|the)?\s*application)?$/i.test(t)) return true;
+  if (/^(please\s+)?review(\s+your)?(\s+application|\s+entries|\s+info|\s+information)?$/i.test(t)) return true;
+  if (/^review\b/i.test(t) && (t.includes('application') || t.includes('submission') || t.includes('entries'))) return true;
+  return false;
+}
+
+function isContactInfoHeadingText(text: string): boolean {
+  if (!text) return false;
+  const t = text.trim().toLowerCase();
+  if (t === 'contact info' || t === 'contact information' || t === 'contact details') return true;
+  if (/^contact\s+(info|information|details)(\s+and\s+resume)?$/i.test(t)) return true;
+  if (/^(your\s+)?contact\s+(info|information|details)$/i.test(t)) return true;
+  return false;
+}
+
+export function isReviewStep(container: Element): boolean {
+  if (!container) return false;
+
+  // Additive data-test-* / step markers on container or descendants
+  const reviewStepSelectors = [
+    '[data-test-easy-apply-review-step]',
+    '[data-easy-apply-step="review"]',
+    '[data-test-modal-step="review"]',
+    '[data-test-review-screen]',
+    '.jobs-easy-apply-review',
+    '[data-test-form-element="review"]',
+    '[data-test-step="review"]',
+  ];
+  for (const sel of reviewStepSelectors) {
+    if (container.matches?.(sel) || container.querySelector?.(sel)) {
+      return true;
+    }
+  }
+
+  // Header text heuristics
+  const headingSelectors = [
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    '[role="heading"]',
+    '.jobs-easy-apply-modal__title',
+    '.jobs-easy-apply-modal__header',
+    '.jobs-easy-apply-form-section__heading',
+    '.t-16',
+    '.t-18',
+    '.t-20',
+    '.t-bold',
+    '[data-test-step-header]',
+    '[data-test-modal-header]',
+    '[data-test-header]',
+  ];
+
+  const headings = Array.from(container.querySelectorAll?.(headingSelectors.join(', ')) ?? []);
+  if (container.matches?.(headingSelectors.join(', '))) {
+    headings.unshift(container);
+  }
+
+  for (const h of headings) {
+    const text = cleanLabel(h.textContent || '');
+    if (isReviewHeadingText(text)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function isContactInfoStep(container: Element): boolean {
+  if (!container) return false;
+
+  // Additive data-test-* / step markers on container or descendants
+  const contactStepSelectors = [
+    '[data-test-easy-apply-contact-info-step]',
+    '[data-easy-apply-step="contact-info"]',
+    '[data-test-modal-step="contact-info"]',
+    '[data-test-contact-info-screen]',
+    '.jobs-easy-apply-contact-info',
+    '[data-test-form-element="contact-info"]',
+    '[data-test-step="contact-info"]',
+  ];
+  for (const sel of contactStepSelectors) {
+    if (container.matches?.(sel) || container.querySelector?.(sel)) {
+      return true;
+    }
+  }
+
+  // Header text heuristics
+  const headingSelectors = [
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    '[role="heading"]',
+    '.jobs-easy-apply-modal__title',
+    '.jobs-easy-apply-modal__header',
+    '.jobs-easy-apply-form-section__heading',
+    '.t-16',
+    '.t-18',
+    '.t-20',
+    '.t-bold',
+    '[data-test-step-header]',
+    '[data-test-modal-header]',
+    '[data-test-header]',
+  ];
+
+  const headings = Array.from(container.querySelectorAll?.(headingSelectors.join(', ')) ?? []);
+  if (container.matches?.(headingSelectors.join(', '))) {
+    headings.unshift(container);
+  }
+
+  for (const h of headings) {
+    const text = cleanLabel(h.textContent || '');
+    if (isContactInfoHeadingText(text)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Employer-question signal: a visible, labeled, non-contact-info, non-cover-letter
 // field whose label looks like a real question (contains "?" or is a descriptive
 // prompt). Used to confirm generic Fuse form-wrapper markers actually belong to
@@ -216,6 +384,7 @@ function hasEmployerQuestionSignal(root: Element): boolean {
     if (isCoverLetterField(f as Element, label)) continue;
     if (isContactInfoLabel(label)) continue;
     if (isResumePickerLabel(label, f as Element)) continue;
+    if (isConsentOrFollowLabel(label)) continue;
     if (label.includes('?')) return true;
     if (label.length >= 12) return true;
   }
@@ -291,7 +460,10 @@ function isCoverLetterField(field: Element, label: string): boolean {
   return false;
 }
 
-function isAdditionalQuestionsStep(modal: Element): boolean {
+export function isAdditionalQuestionsStep(modal: Element): boolean {
+  if (isReviewStep(modal) || isContactInfoStep(modal)) {
+    return false;
+  }
   const txt = (modal.textContent || '').toLowerCase();
   if (txt.includes('additional questions')) return true;
   // Generic Fuse form-wrapper markers (fb-dash-form-element etc.) are not
@@ -313,6 +485,11 @@ export function extractLinkedInQuestions(root: ParentNode): ExtractionResult {
 
   // S7B: if no Easy Apply dialog container, return no questions (skip search page entirely)
   if (!modal) {
+    return { questions: [], jobContext, host, adapter: 'linkedin' };
+  }
+
+  // S7B / Q4: Step guards - Review and Contact Info steps yield no questions
+  if (isReviewStep(modal) || isContactInfoStep(modal)) {
     return { questions: [], jobContext, host, adapter: 'linkedin' };
   }
 
