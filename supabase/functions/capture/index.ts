@@ -67,6 +67,21 @@ Deno.serve(async (req) => {
   let memoryChunksFailed = 0;
   let dedupSkipped = 0;
   let mismatchesCount = 0;
+  let failedItems = 0;
+
+  const captureSuccessResponse = () => jsonResponse({
+    ok: true,
+    applicationId,
+    inserted: inserted.length,
+    insertedIds: inserted,
+    droppedMismatched,
+    droppedSensitive: 0,
+    memoryChunksFailed,
+    dedupSkipped,
+    failedItems,
+    sensitiveRejections: [],
+    mismatchesLogged: mismatchesCount,
+  }, 200);
 
   try {
     const authHeader = req.headers.get('Authorization');
@@ -246,10 +261,12 @@ Deno.serve(async (req) => {
               .single();
             if (qaErr2 || !qaRow2) {
               console.error('[capture] qa_pairs insert failed without embedding', qaErr2);
+              failedItems++;
               continue;
             }
             inserted.push((qaRow2 as { id: string }).id);
           } else {
+            failedItems++;
             continue;
           }
         } else {
@@ -326,8 +343,14 @@ Deno.serve(async (req) => {
           }
         }
       } catch (itemErr) {
+        failedItems++;
         console.error('[capture] error processing answer item:', ans.questionLabel, itemErr);
       }
+    }
+
+    // Nothing was saved and at least one answer failed outright — do not claim success.
+    if (inserted.length === 0 && failedItems > 0) {
+      return jsonResponse({ error: 'We could not save your application answers. Please try again.' }, 500);
     }
 
     // S9: voice-corpus trigger — style-profile owns claim/in-flight (non-blocking background task)
@@ -335,35 +358,13 @@ Deno.serve(async (req) => {
       triggerStyleProfileRebuildInBackground(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
     }
 
-    return jsonResponse({
-      ok: true,
-      applicationId,
-      inserted: inserted.length,
-      insertedIds: inserted,
-      droppedMismatched,
-      droppedSensitive: 0,
-      memoryChunksFailed,
-      dedupSkipped,
-      sensitiveRejections: [],
-      mismatchesLogged: mismatchesCount,
-    }, 200);
+    return captureSuccessResponse();
   } catch (e) {
     console.error('[capture] unexpected error:', e);
     if (inserted.length > 0) {
       // Truthful error handling: at least one answer was successfully saved to DB.
       // Return 200 with the saved answer IDs and degrade gracefully.
-      return jsonResponse({
-        ok: true,
-        applicationId,
-        inserted: inserted.length,
-        insertedIds: inserted,
-        droppedMismatched,
-        droppedSensitive: 0,
-        memoryChunksFailed,
-        dedupSkipped,
-        sensitiveRejections: [],
-        mismatchesLogged: mismatchesCount,
-      }, 200);
+      return captureSuccessResponse();
     }
     return jsonResponse({ error: 'An unexpected error occurred while saving your application answers. Please try again.' }, 500);
   }
