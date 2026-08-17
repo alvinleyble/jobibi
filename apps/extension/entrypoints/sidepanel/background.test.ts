@@ -117,6 +117,79 @@ describe('Background Service Worker Capture Handler', () => {
       });
     });
 
+    it('handles large multi-answer captures (~15 items) with 200 OK and broadcasts completion', async () => {
+      vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
+        data: {
+          session: {
+            access_token: 'fake-jwt-token',
+            refresh_token: 'fake-refresh',
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: { id: 'user-123', app_metadata: {}, user_metadata: {}, aud: 'authenticated', created_at: '' },
+          },
+        },
+        error: null,
+      });
+
+      const fifteenAnswers = Array.from({ length: 15 }, (_, i) => ({
+        questionLabel: `Requirement question ${i + 1}`,
+        answerText: `Answer for requirement ${i + 1}`,
+        draftText: null,
+        fieldSelector: `#q_${i + 1}`,
+        fieldId: `q_${i + 1}`,
+        mappingVerified: true,
+      }));
+
+      const largePayload: CapturePayload = {
+        ...samplePayload,
+        answers: fifteenAnswers,
+      };
+
+      const mockInvoke = vi.fn().mockResolvedValue({
+        data: {
+          ok: true,
+          applicationId: 'app-456',
+          inserted: 15,
+          insertedIds: fifteenAnswers.map((_, i) => `qa-${i + 1}`),
+          droppedMismatched: 0,
+          memoryChunksFailed: 0,
+          dedupSkipped: 0,
+        },
+        error: null,
+      });
+
+      vi.spyOn(supabase, 'functions', 'get').mockReturnValue({
+        invoke: mockInvoke,
+      } as never);
+
+      const setSpy = vi.spyOn(browser.storage.local, 'set').mockResolvedValue(undefined);
+      const sendSpy = vi.spyOn(browser.runtime, 'sendMessage').mockResolvedValue(undefined);
+
+      const res = await handleCapture(largePayload);
+
+      expect(res.ok).toBe(true);
+      expect(mockInvoke).toHaveBeenCalledWith('capture', expect.objectContaining({
+        body: expect.objectContaining({
+          answers: expect.arrayContaining([
+            expect.objectContaining({ questionLabel: 'Requirement question 1' }),
+            expect.objectContaining({ questionLabel: 'Requirement question 15' }),
+          ]),
+        }),
+      }));
+      expect(setSpy).toHaveBeenCalledWith({
+        jobibi_last_capture: expect.objectContaining({
+          inserted: 15,
+          droppedMismatched: 0,
+        }),
+      });
+      expect(sendSpy).toHaveBeenCalledWith({
+        type: 'JOBIBI_CAPTURE_COMPLETED',
+        payload: expect.objectContaining({
+          inserted: 15,
+        }),
+      });
+    });
+
     it('surfaces capture Edge Function errors via storage and a failure broadcast', async () => {
       vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
         data: { session: null },
@@ -149,3 +222,4 @@ describe('Background Service Worker Capture Handler', () => {
     });
   });
 });
+

@@ -86,8 +86,28 @@ export function sanitizeProfileMd(raw: string): string {
   }
   // If model returned non-bulleted text, coerce to bullets (best-effort)
   if (lines.length) {
-    const coerced = lines.slice(0, STYLE_PROFILE_MAX_BULLETS).map((l) => (l.startsWith('-') ? l : `- ${l.replace(/^[•*]\s*/, '')}`));
+    const coerced = lines.slice(0, STYLE_PROFILE_MAX_BULLETS).map((b) => (b.startsWith('-') ? b : `- ${b.replace(/^[•*]\s*/, '')}`));
     return coerced.join('\n').slice(0, STYLE_PROFILE_MAX_PROFILE_CHARS);
   }
   return md;
+}
+
+/**
+ * Dispatches an asynchronous background task using EdgeRuntime.waitUntil if available,
+ * with isolated error handling to prevent unhandled rejections or synchronous blocking.
+ */
+export function dispatchBackgroundRebuild(
+  task: () => Promise<unknown>,
+  edgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void },
+): void {
+  try {
+    const p = Promise.resolve().then(task).catch((err) => {
+      console.warn('[style-profile] background rebuild error:', err);
+    });
+    if (typeof edgeRuntime?.waitUntil === 'function') {
+      edgeRuntime.waitUntil(p);
+    }
+  } catch (err) {
+    console.warn('[style-profile] failed to dispatch background task:', err);
+  }
 }
