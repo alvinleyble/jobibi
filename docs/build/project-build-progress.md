@@ -145,6 +145,13 @@
   4. **Out of scope**: LinkedIn/Indeed eager-snapshot parity (captain's `snapshot-vs-d16` decision covers all three sites, but this slice's brief scopes the trigger fix to JobStreet only) — left for a follow-up slice; `linkedin.ts`/`indeed.ts` untouched.
   5. **Verification**: 290 unit tests passing (`packages/shared` 258, `apps/extension` 32).
 
+- 2026-08-17 — **Design grill: pick-list questions.** No code. Settled how Jobibi behaves on a question whose answer is ticked rather than typed, after `suggest` was observed returning essay prose for a fifteen-checkbox LinkedIn question ("What are the testing tools and methods have you worked with?"). Outcome recorded as **D24 (accepted)** and **D25 (deferred)** in [`docs/DECISIONS.md`](../DECISIONS.md).
+  1. **Guiding principle:** pick-list questions are the easy ones; essays are the work Jobibi exists to do. Help is worth most where the user faces a blank box.
+  2. **D24, to build:** `select`/`radio`/`checkbox` is a *pick-list*. `suggest` returns a fixed "pick from the options on the page" response decided in code — before retrieval, before the gate, with no model call and zero tokens (D8). The panel card drops the **Suggest an answer** button for these. Jobibi never writes prose for a pick-list and never ticks a box.
+  3. **Two invariants the slice must not break:** pick-list questions are *not* written to `gate_decisions` (they never reached the gate; logging them would flood D15's calibration with refusals the gate never made), and extraction is *unchanged* so capture keeps storing the user's ticked answer (D12). Not helping with a question is not the same as not seeing it. `number` fields stay ordinary questions Jobibi answers.
+  4. **D25, deferred with its design intact:** recommending *which* options apply is designed but not built — a recommendation is a draft rather than a fourth gate outcome; the model picks from the option list and code drops any label not verbatim on the page; one flat list biased toward recommending fewer; an empty list is a valid answer and never falls back to `ask`; display-only, autofill unaffected. Deferred because it is the largest item on the queue for the question class the captain rates easiest — ship D24, live with it, then decide.
+  5. **Queued as:** `jobibi-picklist-no-prose` (D24, ready) and `jobibi-selectable-answer-awareness` (D25, held pending a fresh captain decision).
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.

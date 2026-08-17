@@ -246,3 +246,40 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 **Supersedes:** D20 (local-first default), D21 (two-posture), D22 (local runtime guardrails). The S14A storage-abstraction slice (PGlite + StorageAdapter, PR #38) is unused by the single-mode product, and S14 (the Local-posture UI/UX spec: BYO-Key entry, cloud import, ONNX download UX) is deferred indefinitely.
 
 **Unchanged for Cloud SaaS Mode 1 (D5b/D5c/D7):** Supabase Postgres + Supabase Auth, AI calls routed through the Jobibi proxy (OpenAI key held in Edge Function secrets; the extension ships zero secrets), and gte-small embeddings running in-process inside Edge Functions. No BYO-Key entry, no in-browser ONNX download, no cloud-to-local import.
+
+## D24 — Pick-list questions: Jobibi steps aside, in code, before any model call — **accepted** (2026-08-17)
+
+**Decision:** A question whose field type is `select`, `radio`, or `checkbox` is a *pick-list*. For a pick-list, `suggest` returns a fixed "pick from the options on the page" response decided in code, before retrieval, before the gate, and without calling the model. The panel renders the question card with no **Suggest an answer** button — just that one line. Jobibi never writes prose for a pick-list, and never ticks a box on the page.
+
+**Why:** pick-list questions are the easy ones. The user already knows whether they have used Cypress; the work Jobibi exists to remove is the blank essay box. Today `suggest` treats a fifteen-checkbox question as an essay prompt and returns prose the user cannot use, which is worse than silence.
+
+**Why in code, before everything:** there is nothing for a model to add, so the call is pure cost. Deciding in code costs zero tokens (D8), returns instantly, and is unit-testable without the model in the loop.
+
+**Consequence — gate telemetry:** pick-list questions are **not** written to the `gate_decisions` record. They never reached the gate, and logging them as refusals would flood the calibration data D15 depends on with decisions the gate never made.
+
+**Consequence — capture is unaffected:** the question is still extracted and still identified as a question, so capture still reads and stores the user's ticked answer (D12, invariant 7). Not helping with a question is not the same as not seeing it.
+
+**Not in scope:** `number` fields stay ordinary questions Jobibi answers — "how many years of experience in QA Testing" is grounded in the user's own history and is not a matter of picking from the page.
+
+**Rejected:** hiding pick-list questions from the panel entirely (silently conceals a question, and the day extraction misclassifies one the user has no way to see it); a greyed-out **Suggest an answer** button (a greyed button already means *working on it* in this UI, so it would reuse a signal that means something else, and it invites a click that is then refused).
+
+**Revisit trigger:** users reporting that a pick-list question genuinely needed help — most likely a long option list where recall is the burden rather than the decision. That is D25.
+
+## D25 — Option-aware recommendations: designed, deferred — **deferred** (2026-08-17)
+
+**Decision:** Jobibi *may later* tell the user which of a pick-list's options their own history supports. The design below is settled so it is not re-litigated, but it is not built. D24 ships first.
+
+**Shape, if built:**
+
+1. **A recommendation is a draft, not a fourth outcome.** The gate keeps `draft` / `ask` / `refuse` exactly as D10 defines them. What changes is the form the draft takes — a set of labels rather than prose. The gate's question ("is there enough of this user's own history here") is identical either way, and stays in code.
+2. **`ExtractedQuestion` carries the option list;** each adapter reads it off its own markup (LinkedIn additionally across the `#interop-outlet` shadow boundary). The contract is shared and site-neutral; only extraction differs per adapter.
+3. **The model picks, code guards.** The model receives the memory snippets and the option labels and returns labels. Code then checks every returned label against the real options on the page and drops any that is not there verbatim. The model can be wrong about *fit* — the user is reviewing anyway — but is structurally incapable of returning something the user cannot tick.
+4. **One flat list, biased toward saying less.** No confidence tiers. On a job application the two errors are not equal: recommending an unused tool puts a false claim in front of an employer, while missing one costs the user a glance. Only the cheap error is acceptable. (The existing coloured dot on each card means label→field mapping confidence and must not be reused for this.)
+5. **Empty is a real answer.** When nothing in the list is supported, say so — "none of these match what I know about you" — and do not fall back to `ask`. An `ask` earns its keep when the collected answer feeds a draft; here Jobibi still would not tick anything, so it would be a round trip back to the user ticking the boxes themselves.
+6. **Still never ticks anything.** Recommendation is display-only, exactly as in D24. Autofill does not apply selections.
+
+**Why deferred:** D24 needs no new information at all — the field type is already known. D25 requires option extraction in three adapters, a change to the question contract, a changed model call, and new panel rendering. It is the largest item on the queue, for the question class the captain rates easiest. Ship the cheap half, live with it, then decide.
+
+**Rejected:** deterministic text matching of memory against option labels instead of the model ("Cypress.io" vs "Cypress", "manual test execution" vs "Manual testing", "Charles Proxy" vs "Charles" all fail quietly in both directions); a fourth gate outcome for selections (pushes a rendering concern into the one component the invariants require to stay a pure judgement about evidence, and every future field type would then argue for its own outcome).
+
+**Revisit trigger:** D24 in the wild showing that long option lists are a recall burden, not a decision the user makes instantly.
