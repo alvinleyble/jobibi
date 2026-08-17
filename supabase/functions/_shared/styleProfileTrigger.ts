@@ -1,9 +1,9 @@
-// S9 — shared voice-corpus trigger check, called from every write path
-// (capture, gap-answer, manual-input, ingest). Only checks the delta and
-// fires a fire-and-forget POST; style-profile itself owns the atomic
-// claim/in-flight check, so this never touches style_profile.rebuilding.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { VOICE_CORPUS_TRIGGER_DELTA } from '../../../packages/shared/src/styleProfile/styleProfile.ts';
+import { VOICE_CORPUS_TRIGGER_DELTA, dispatchBackgroundRebuild } from '../../../packages/shared/src/styleProfile/styleProfile.ts';
+
+declare const EdgeRuntime: {
+  waitUntil(promise: Promise<unknown>): void;
+} | undefined;
 
 export async function maybeTriggerStyleProfileRebuild(
   supabase: SupabaseClient,
@@ -29,3 +29,18 @@ export async function maybeTriggerStyleProfileRebuild(
     }).catch(() => {});
   } catch { /* silent — next write retries */ }
 }
+
+export function triggerStyleProfileRebuildInBackground(
+  supabase: SupabaseClient,
+  userId: string,
+  authHeader: string,
+  supabaseUrl: string,
+): void {
+  const runtime = typeof EdgeRuntime !== 'undefined' ? EdgeRuntime : undefined;
+  dispatchBackgroundRebuild(
+    () => maybeTriggerStyleProfileRebuild(supabase, userId, authHeader, supabaseUrl),
+    runtime,
+  );
+}
+
+

@@ -161,6 +161,11 @@
   6. **Out of scope, untouched**: Indeed (`indeed.ts`/`indeed.content.ts`), label de-duplication, review/contact-info step classification, and *which* questions are extracted — this slice changes only when and whether the answer is captured.
   7. **Final proof is a manual LinkedIn Easy Apply run** through Next and Review by the captain; not attempted here.
 
+- 2026-08-18 — **Capture compute limit fix & style-profile trigger decoupling** on branch `fm/jobibi-capture-compute-limit`. Fixed false-alarm "Function failed due to not having enough compute resources" error banner after successful answer captures in Jobibi's `capture` edge function.
+  1. **Decoupled style-profile rebuild (`supabase/functions/_shared/styleProfileTrigger.ts`)**: Took `maybeTriggerStyleProfileRebuild` off the critical synchronous response path across write paths (`capture`, `gap-answer`, `manual-input`, `ingest`). Added `triggerStyleProfileRebuildInBackground` using `EdgeRuntime.waitUntil(...)` with isolated error handling so the save responds immediately as soon as database writes complete.
+  2. **Truthful error handling (`supabase/functions/capture/index.ts`)**: When answers are successfully inserted into `qa_pairs` / `memory_chunks`, the function returns HTTP 200 with `insertedIds` even if secondary follow-ups or compute limits occur. Wrapped per-answer loop in isolated try/catch so one item issue does not abort the rest of the batch.
+  3. **Verification**: Added unit tests in `styleProfileTrigger.test.ts` (5 tests) and `background.test.ts` (large 15-item batch handling); all 288 shared unit tests, 33 extension unit tests, and 24 Playwright E2E tests pass.
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.

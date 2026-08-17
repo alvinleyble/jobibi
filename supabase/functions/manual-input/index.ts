@@ -6,7 +6,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
-import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
+import { triggerStyleProfileRebuildInBackground } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { deriveOrigin } from '../../../packages/shared/src/capture/capture.ts';
 
@@ -185,7 +185,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
+    triggerStyleProfileRebuildInBackground(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
 
     return jsonResponse(
       {

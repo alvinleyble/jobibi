@@ -5,7 +5,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
-import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
+import { triggerStyleProfileRebuildInBackground } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { keywordOverlap, cosine, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
 import {
@@ -304,7 +304,7 @@ Deno.serve(async (req) => {
     const sources = parsedContent.sources ?? [{ kind: 'gap_answer', label: 'Your gap answer', ref: (gapRow as { id: string }).id }];
 
     // S9: voice-corpus trigger (gap_answers always counts, D13 no filter); style-profile owns claim/in-flight
-    await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
+    triggerStyleProfileRebuildInBackground(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
 
     return jsonResponse(
       GapAnswerResponseSchema.parse({

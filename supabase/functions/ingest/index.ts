@@ -17,7 +17,7 @@ import {
 } from '../../../packages/shared/src/ingestion/extract.ts';
 import { pastedDocumentProvenance, validatePaste } from '../../../packages/shared/src/ingestion/paste.ts';
 import { corsHeaders } from '../_shared/cors.ts';
-import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
+import { triggerStyleProfileRebuildInBackground } from '../_shared/styleProfileTrigger.ts';
 
 declare const Supabase: {
   ai: { Session: new (model: string) => { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } };
@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
     // S9: trigger only for qualifying documents (user_written / user_edited); accepted_verbatim and NULL-origin uploads do not count (D13)
     // style-profile owns claim/in-flight
     if (origin === 'user_written' || origin === 'user_edited') {
-      await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
+      triggerStyleProfileRebuildInBackground(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
     }
 
     return jsonResponse({ documentId: document.id, chunkCount: chunkRows.length }, 200);

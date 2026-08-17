@@ -6,7 +6,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { corsHeaders } from '../_shared/cors.ts';
-import { maybeTriggerStyleProfileRebuild } from '../_shared/styleProfileTrigger.ts';
+import { triggerStyleProfileRebuildInBackground } from '../_shared/styleProfileTrigger.ts';
 import { normalizeQuestion } from '../../../packages/shared/src/gate/normalize.ts';
 import { deriveOrigin, scoreNearDuplicate, scoreMemoryChunkDuplicate, MEMORY_CHUNK_DEDUP_THRESHOLD } from '../../../packages/shared/src/capture/capture.ts';
 import { keywordOverlap, hybridScore } from '../../../packages/shared/src/gate/retrieve.ts';
@@ -59,6 +59,15 @@ const CaptureRequestSchema = z.object({
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  // Track saved state outside so catch block has visibility for truthful error responses
+  const inserted: string[] = [];
+  let applicationId: string | null = null;
+  let droppedMismatched = 0;
+  let memoryChunksFailed = 0;
+  let dedupSkipped = 0;
+  let mismatchesCount = 0;
+
   try {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) return jsonResponse({ error: 'Please sign in to save application answers.' }, 401);
@@ -76,6 +85,7 @@ Deno.serve(async (req) => {
     if (!parsed.success) return jsonResponse({ error: 'Please provide valid application answers to save.' }, 400);
 
     const { answers, application, jobContext, mismatches } = parsed.data;
+    mismatchesCount = mismatches?.length ?? 0;
 
     // Instantiate embedder session once at request scope
     let embedder: { run(input: string, opts?: Record<string, unknown>): Promise<number[]> } | null = null;
@@ -94,7 +104,6 @@ Deno.serve(async (req) => {
     };
 
     // Resolve application row: use provided app or jobContext
-    let applicationId: string | null = null;
     const company = application?.company ?? jobContext?.company ?? null;
     const roleTitle = application?.roleTitle ?? jobContext?.role ?? null;
     const site = application?.site ?? null;
@@ -103,45 +112,48 @@ Deno.serve(async (req) => {
 
     // Create application if we have any context and at least one answer to attach
     if (company || roleTitle || url) {
-      const { data: appRow, error: appErr } = await supabase
-        .from('applications')
-        .insert({
-          user_id: user.id,
-          company,
-          role_title: roleTitle,
-          site,
-          url,
-          url_hash: urlHash,
-          submitted_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single();
-      if (!appErr && appRow) applicationId = (appRow as { id: string }).id;
-      else {
-        // If insert fails (RLS etc), proceed without application link
-        console.warn('[capture] application insert failed', appErr);
+      try {
+        const { data: appRow, error: appErr } = await supabase
+          .from('applications')
+          .insert({
+            user_id: user.id,
+            company,
+            role_title: roleTitle,
+            site,
+            url,
+            url_hash: urlHash,
+            submitted_at: new Date().toISOString(),
+          })
+          .select('id')
+          .single();
+        if (!appErr && appRow) applicationId = (appRow as { id: string }).id;
+        else {
+          // If insert fails (RLS etc), proceed without application link
+          console.warn('[capture] application insert failed', appErr);
+        }
+      } catch (appExc) {
+        console.warn('[capture] application insert exception', appExc);
       }
     }
 
     // Log mismatches for audit (D16) — dropped writes
     if (mismatches && mismatches.length) {
       for (const mm of mismatches) {
-        const { error: logErr } = await supabase.from('capture_mismatches').insert({
-          user_id: user.id,
-          application_id: applicationId,
-          question_label: mm.questionLabel,
-          original_mapping: mm.originalMapping ? JSON.parse(JSON.stringify(mm.originalMapping)) : null,
-          rederived_mapping: mm.rederivedMapping ? JSON.parse(JSON.stringify(mm.rederivedMapping)) : null,
-          reason: mm.reason,
-        });
-        if (logErr) console.warn('[capture] mismatch log failed', logErr);
+        try {
+          const { error: logErr } = await supabase.from('capture_mismatches').insert({
+            user_id: user.id,
+            application_id: applicationId,
+            question_label: mm.questionLabel,
+            original_mapping: mm.originalMapping ? JSON.parse(JSON.stringify(mm.originalMapping)) : null,
+            rederived_mapping: mm.rederivedMapping ? JSON.parse(JSON.stringify(mm.rederivedMapping)) : null,
+            reason: mm.reason,
+          });
+          if (logErr) console.warn('[capture] mismatch log failed', logErr);
+        } catch (logExc) {
+          console.warn('[capture] mismatch log exception', logExc);
+        }
       }
     }
-
-    const inserted: string[] = [];
-    let droppedMismatched = 0;
-    let memoryChunksFailed = 0;
-    let dedupSkipped = 0;
 
     // Pre-fetch dedup candidates for vector deduplication (>=0.90 hybrid)
     let dedupQaRows: Array<{ id: string; question_label: string; question_norm: string; embedding: unknown }> = [];
@@ -174,149 +186,153 @@ Deno.serve(async (req) => {
     }
 
     for (const ans of answers) {
-      // D16: fail closed — only a write explicitly marked verified survives.
-      // A missing flag is treated the same as an explicit false.
-      if (ans.mappingVerified !== true) {
-        droppedMismatched++;
-        // also log this specific drop if not already in mismatches
-        const { error: logErr } = await supabase.from('capture_mismatches').insert({
-          user_id: user.id,
-          application_id: applicationId,
-          question_label: ans.questionLabel,
-          original_mapping: ans.fieldSelector ? { selector: ans.fieldSelector, id: ans.fieldId } : null,
-          rederived_mapping: null,
-          reason: ans.mismatchReason ?? (ans.mappingVerified === false
-            ? 'mapping mismatch (client-verified false)'
-            : 'mapping verification missing (fail-closed)'),
-        });
-        if (logErr) console.warn('[capture] mismatch log failed', logErr);
-        continue;
-      }
-
-      const trimmedAnswer = ans.answerText.trim();
-      if (!trimmedAnswer) continue;
-
-      const qLabel = ans.questionLabel.trim();
-      const qNorm = ans.questionNorm?.trim() ? ans.questionNorm!.trim() : normalizeQuestion(qLabel);
-
-      const { origin, editDistance } = deriveOrigin(ans.draftText ?? null, trimmedAnswer);
-
-      // embedding for qa_pairs (for seen-before)
-      const embedding = await getEmbedding(`${qLabel} ${trimmedAnswer}`);
-
-      const qaPayload: Record<string, unknown> = {
-        user_id: user.id,
-        application_id: applicationId,
-        question_label: qLabel,
-        question_norm: qNorm,
-        answer_text: trimmedAnswer,
-        draft_text: ans.draftText ?? null,
-        origin,
-        edit_distance: editDistance,
-        embedding: embedding ? JSON.stringify(embedding) : null,
-      };
-
-      const { data: qaRow, error: qaErr } = await supabase
-        .from('qa_pairs')
-        .insert(qaPayload)
-        .select('id')
-        .single();
-
-      if (qaErr || !qaRow) {
-        console.warn('[capture] qa_pairs insert failed', qaErr);
-        // retry without embedding if embedding column was issue
-        if (embedding) {
-          const { data: qaRow2, error: qaErr2 } = await supabase
-            .from('qa_pairs')
-            .insert({ ...qaPayload, embedding: null })
-            .select('id')
-            .single();
-          if (qaErr2 || !qaRow2) {
-            console.error('[capture] qa_pairs insert failed without embedding', qaErr2);
-            continue;
-          }
-          inserted.push((qaRow2 as { id: string }).id);
-        } else {
+      try {
+        // D16: fail closed — only a write explicitly marked verified survives.
+        // A missing flag is treated the same as an explicit false.
+        if (ans.mappingVerified !== true) {
+          droppedMismatched++;
+          // also log this specific drop if not already in mismatches
+          const { error: logErr } = await supabase.from('capture_mismatches').insert({
+            user_id: user.id,
+            application_id: applicationId,
+            question_label: ans.questionLabel,
+            original_mapping: ans.fieldSelector ? { selector: ans.fieldSelector, id: ans.fieldId } : null,
+            rederived_mapping: null,
+            reason: ans.mismatchReason ?? (ans.mappingVerified === false
+              ? 'mapping mismatch (client-verified false)'
+              : 'mapping verification missing (fail-closed)'),
+          });
+          if (logErr) console.warn('[capture] mismatch log failed', logErr);
           continue;
         }
-      } else {
-        inserted.push((qaRow as { id: string }).id);
-      }
 
-      // Also chunk into memory_chunks for retrieval (D12 growth loop) — with vector deduplication (>=0.90 hybrid)
-      const insertedId = inserted[inserted.length - 1];
-      // Keep dedup candidate list in sync: add this question to qa cache so later answers in same batch dedup against it
-      dedupQaRows.push({ id: insertedId, question_label: qLabel, question_norm: qNorm, embedding: embedding ? JSON.stringify(embedding) : null });
-      // Only chunk if answer is substantive (>10 chars)
-      if (trimmedAnswer.length >= 10) {
-        // Check near-duplicate before inserting memory_chunks
-        let isDuplicate = false;
-        try {
-          // try to embed question for hybrid cosine comparison (fail open to keyword-only)
-          const qEmb = await getEmbedding(qLabel);
-          for (const c of dedupQaRows.slice(0, -1)) {
-            // exclude the just-pushed current row itself; check against prior rows only
-            const s = scoreNearDuplicate(qLabel, { id: c.id, question_label: c.question_label, question_norm: c.question_norm, answer_text: '' , embedding: c.embedding as string | null } as never, { questionEmbedding: qEmb });
-            if (s >= MEMORY_CHUNK_DEDUP_THRESHOLD) { isDuplicate = true; break; }
+        const trimmedAnswer = ans.answerText.trim();
+        if (!trimmedAnswer) continue;
+
+        const qLabel = ans.questionLabel.trim();
+        const qNorm = ans.questionNorm?.trim() ? ans.questionNorm!.trim() : normalizeQuestion(qLabel);
+
+        const { origin, editDistance } = deriveOrigin(ans.draftText ?? null, trimmedAnswer);
+
+        // embedding for qa_pairs (for seen-before)
+        const embedding = await getEmbedding(`${qLabel} ${trimmedAnswer}`);
+
+        const qaPayload: Record<string, unknown> = {
+          user_id: user.id,
+          application_id: applicationId,
+          question_label: qLabel,
+          question_norm: qNorm,
+          answer_text: trimmedAnswer,
+          draft_text: ans.draftText ?? null,
+          origin,
+          edit_distance: editDistance,
+          embedding: embedding ? JSON.stringify(embedding) : null,
+        };
+
+        const { data: qaRow, error: qaErr } = await supabase
+          .from('qa_pairs')
+          .insert(qaPayload)
+          .select('id')
+          .single();
+
+        if (qaErr || !qaRow) {
+          console.warn('[capture] qa_pairs insert failed', qaErr);
+          // retry without embedding if embedding column was issue
+          if (embedding) {
+            const { data: qaRow2, error: qaErr2 } = await supabase
+              .from('qa_pairs')
+              .insert({ ...qaPayload, embedding: null })
+              .select('id')
+              .single();
+            if (qaErr2 || !qaRow2) {
+              console.error('[capture] qa_pairs insert failed without embedding', qaErr2);
+              continue;
+            }
+            inserted.push((qaRow2 as { id: string }).id);
+          } else {
+            continue;
           }
-          if (!isDuplicate) {
-            for (const ch of dedupChunks) {
-              const s = scoreMemoryChunkDuplicate(qLabel, { id: ch.id, text: ch.text, embedding: ch.embedding as string | null }, { questionEmbedding: qEmb });
+        } else {
+          inserted.push((qaRow as { id: string }).id);
+        }
+
+        // Also chunk into memory_chunks for retrieval (D12 growth loop) — with vector deduplication (>=0.90 hybrid)
+        const insertedId = inserted[inserted.length - 1];
+        // Keep dedup candidate list in sync: add this question to qa cache so later answers in same batch dedup against it
+        dedupQaRows.push({ id: insertedId, question_label: qLabel, question_norm: qNorm, embedding: embedding ? JSON.stringify(embedding) : null });
+        // Only chunk if answer is substantive (>10 chars)
+        if (trimmedAnswer.length >= 10) {
+          // Check near-duplicate before inserting memory_chunks
+          let isDuplicate = false;
+          try {
+            // try to embed question for hybrid cosine comparison (fail open to keyword-only)
+            const qEmb = await getEmbedding(qLabel);
+            for (const c of dedupQaRows.slice(0, -1)) {
+              // exclude the just-pushed current row itself; check against prior rows only
+              const s = scoreNearDuplicate(qLabel, { id: c.id, question_label: c.question_label, question_norm: c.question_norm, answer_text: '' , embedding: c.embedding as string | null } as never, { questionEmbedding: qEmb });
               if (s >= MEMORY_CHUNK_DEDUP_THRESHOLD) { isDuplicate = true; break; }
             }
-          }
-          if (!isDuplicate && insertedQLabelsThisBatch.length) {
-            for (const prevQ of insertedQLabelsThisBatch) {
-              const kw = keywordOverlap(qLabel, prevQ);
-              if (hybridScore(kw, kw) >= MEMORY_CHUNK_DEDUP_THRESHOLD) { isDuplicate = true; break; }
-            }
-          }
-        } catch {
-          // on scoring error, do not deduplicate
-        }
-        if (isDuplicate) {
-          dedupSkipped++;
-        } else {
-          try {
-            const memEmb = await getEmbedding(trimmedAnswer);
-            const memPayload: Record<string, unknown> = {
-              user_id: user.id,
-              document_id: null,
-              chunk_index: nextChunkIndex++,
-              type: 'qa_pair',
-              text: `Q: ${qLabel}\nA: ${trimmedAnswer}`,
-              embedding: memEmb ? JSON.stringify(memEmb) : null,
-            };
-            const { data: memRow, error: memErr } = await supabase.from('memory_chunks').insert(memPayload).select('id').single();
-            if (memErr) {
-              let recovered = false;
-              if (memEmb) {
-                const { data: memRow2, error: memErr2 } = await supabase.from('memory_chunks').insert({ ...memPayload, embedding: null }).select('id').single();
-                if (!memErr2 && memRow2) recovered = true;
-                else console.error('[capture] memory_chunks insert failed (after retry)', memErr2 ?? memErr);
-              } else {
-                console.error('[capture] memory_chunks insert failed', memErr);
+            if (!isDuplicate) {
+              for (const ch of dedupChunks) {
+                const s = scoreMemoryChunkDuplicate(qLabel, { id: ch.id, text: ch.text, embedding: ch.embedding as string | null }, { questionEmbedding: qEmb });
+                if (s >= MEMORY_CHUNK_DEDUP_THRESHOLD) { isDuplicate = true; break; }
               }
-              if (!recovered) memoryChunksFailed++;
-            } else {
-              void memRow;
-              // track successful memory chunk for intra-batch dedup
-              const newChunkId = (memRow as { id: string }).id;
-              dedupChunks.push({ id: newChunkId, text: `Q: ${qLabel}\nA: ${trimmedAnswer}`, embedding: memEmb ? JSON.stringify(memEmb) : null });
-              insertedQLabelsThisBatch.push(qLabel);
             }
-            void insertedId;
-          } catch (e) {
-            memoryChunksFailed++;
-            console.error('[capture] memory_chunks insert failed', e);
+            if (!isDuplicate && insertedQLabelsThisBatch.length) {
+              for (const prevQ of insertedQLabelsThisBatch) {
+                const kw = keywordOverlap(qLabel, prevQ);
+                if (hybridScore(kw, kw) >= MEMORY_CHUNK_DEDUP_THRESHOLD) { isDuplicate = true; break; }
+              }
+            }
+          } catch {
+            // on scoring error, do not deduplicate
+          }
+          if (isDuplicate) {
+            dedupSkipped++;
+          } else {
+            try {
+              const memEmb = await getEmbedding(trimmedAnswer);
+              const memPayload: Record<string, unknown> = {
+                user_id: user.id,
+                document_id: null,
+                chunk_index: nextChunkIndex++,
+                type: 'qa_pair',
+                text: `Q: ${qLabel}\nA: ${trimmedAnswer}`,
+                embedding: memEmb ? JSON.stringify(memEmb) : null,
+              };
+              const { data: memRow, error: memErr } = await supabase.from('memory_chunks').insert(memPayload).select('id').single();
+              if (memErr) {
+                let recovered = false;
+                if (memEmb) {
+                  const { data: memRow2, error: memErr2 } = await supabase.from('memory_chunks').insert({ ...memPayload, embedding: null }).select('id').single();
+                  if (!memErr2 && memRow2) recovered = true;
+                  else console.error('[capture] memory_chunks insert failed (after retry)', memErr2 ?? memErr);
+                } else {
+                  console.error('[capture] memory_chunks insert failed', memErr);
+                }
+                if (!recovered) memoryChunksFailed++;
+              } else {
+                void memRow;
+                // track successful memory chunk for intra-batch dedup
+                const newChunkId = (memRow as { id: string }).id;
+                dedupChunks.push({ id: newChunkId, text: `Q: ${qLabel}\nA: ${trimmedAnswer}`, embedding: memEmb ? JSON.stringify(memEmb) : null });
+                insertedQLabelsThisBatch.push(qLabel);
+              }
+              void insertedId;
+            } catch (e) {
+              memoryChunksFailed++;
+              console.error('[capture] memory_chunks insert failed', e);
+            }
           }
         }
+      } catch (itemErr) {
+        console.error('[capture] error processing answer item:', ans.questionLabel, itemErr);
       }
     }
 
-    // S9: voice-corpus trigger — style-profile owns claim/in-flight
+    // S9: voice-corpus trigger — style-profile owns claim/in-flight (non-blocking background task)
     if (inserted.length > 0) {
-      await maybeTriggerStyleProfileRebuild(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
+      triggerStyleProfileRebuildInBackground(supabase, user.id, authHeader, Deno.env.get('SUPABASE_URL')!);
     }
 
     return jsonResponse({
@@ -329,10 +345,27 @@ Deno.serve(async (req) => {
       memoryChunksFailed,
       dedupSkipped,
       sensitiveRejections: [],
-      mismatchesLogged: mismatches?.length ?? 0,
+      mismatchesLogged: mismatchesCount,
     }, 200);
   } catch (e) {
     console.error('[capture] unexpected error:', e);
+    if (inserted.length > 0) {
+      // Truthful error handling: at least one answer was successfully saved to DB.
+      // Return 200 with the saved answer IDs and degrade gracefully.
+      return jsonResponse({
+        ok: true,
+        applicationId,
+        inserted: inserted.length,
+        insertedIds: inserted,
+        droppedMismatched,
+        droppedSensitive: 0,
+        memoryChunksFailed,
+        dedupSkipped,
+        sensitiveRejections: [],
+        mismatchesLogged: mismatchesCount,
+      }, 200);
+    }
     return jsonResponse({ error: 'An unexpected error occurred while saving your application answers. Please try again.' }, 500);
   }
 });
+
