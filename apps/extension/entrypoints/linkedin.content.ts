@@ -1,5 +1,5 @@
-import { extractLinkedInQuestions, verifySingleMapping, executeAutofill, readHumanValue, readHumanCheckboxGroupValue } from '@jobibi/shared';
-import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload } from '@jobibi/shared';
+import { extractLinkedInQuestions, verifySingleMapping, executeAutofill, readHumanValue, readHumanCheckboxGroupValue, resolveCapturePayload, linkedInJobKeyFromUrl } from '@jobibi/shared';
+import type { ExtractionResult, ExtractedQuestion, InsertFieldPayload, CaptureSnapshot, CaptureAnswerEntry } from '@jobibi/shared';
 
 
 export default defineContentScript({
@@ -15,6 +15,10 @@ export default defineContentScript({
     let debounceTimer: number | null = null;
     const pendingDraftMap = new Map<string, string>();
     const suggestionMappingById = new Map<string, ExtractedQuestion>();
+    // Eager pre-navigation capture snapshot (Q3 snapshot-at-click). Taken at
+    // step-transition click time, merged back in performCapture after the SPA
+    // has navigated away from the answered step.
+    let pendingCaptureSnapshot: CaptureSnapshot | null = null;
 
     // Shadow-DOM piercing for content-script DOM queries (S7B fix — mirrors
     // the adapter's getSearchRoots; shallow one-level check for
@@ -182,18 +186,14 @@ export default defineContentScript({
       return null;
     }
 
-    function performCapture(trigger: string) {
-      const freshResult = extractLinkedInQuestions(document);
-      const freshById = new Map<string, ExtractedQuestion>(freshResult.questions.map((q) => [q.id, q]));
-      const answers: Array<{
-        questionLabel: string;
-        answerText: string;
-        draftText: string | null;
-        fieldSelector: string;
-        fieldId: string;
-        mappingVerified: boolean;
-        mismatchReason?: string;
-      }> = [];
+    // D16 + D12: read answered values from a given extraction result. Reuses
+    // the suggestion-time mapping (verifySingleMapping) for questions Jobibi
+    // helped with, then falls through to every identified question field.
+    function readAnswersFrom(
+      result: ExtractionResult,
+    ): { answers: CaptureAnswerEntry[]; mismatches: Array<{ questionLabel: string; reason: string }> } {
+      const freshById = new Map<string, ExtractedQuestion>(result.questions.map((q) => [q.id, q]));
+      const answers: CaptureAnswerEntry[] = [];
       const mismatches: Array<{ questionLabel: string; reason: string }> = [];
       const seenFreshIds = new Set<string>();
 
@@ -222,7 +222,7 @@ export default defineContentScript({
         seenFreshIds.add(qId);
       }
 
-      for (const freshQ of freshResult.questions) {
+      for (const freshQ of result.questions) {
         if (seenFreshIds.has(freshQ.id)) continue;
         const el = getFieldElement(freshQ);
         if (!el) continue;
@@ -238,6 +238,45 @@ export default defineContentScript({
         });
       }
 
+      return { answers, mismatches };
+    }
+
+    // Q3 snapshot-at-click: snapshot field values + mapping synchronously
+    // BEFORE the SPA navigation that a Next/Review click triggers. Re-deriving
+    // here (at click time) is the D16 "capture time" — the deferred
+    // performCapture may run after the DOM has already swapped to the next step.
+    function captureSnapshotNow(): CaptureSnapshot | null {
+      const result = extractLinkedInQuestions(document);
+      const { answers, mismatches } = readAnswersFrom(result);
+      if (answers.length === 0 && mismatches.length === 0) return null;
+      return {
+        answers,
+        mismatches,
+        jobContext: result.jobContext,
+        url: location.href,
+        host: location.host,
+      };
+    }
+
+    function performCapture(trigger: string) {
+      const freshResult = extractLinkedInQuestions(document);
+      const fresh = readAnswersFrom(freshResult);
+
+      // Q3: when the deferred capture re-derives an empty step (the SPA already
+      // navigated to the next step), merge the snapshot stashed at click time —
+      // guarded by the same-application check (jobContext + URL job key) so a
+      // snapshot from a different job is discarded (D16 cross-job guard).
+      const snap = pendingCaptureSnapshot;
+      pendingCaptureSnapshot = null;
+      const { answers, mismatches, jobContext } = resolveCapturePayload(
+        fresh.answers,
+        fresh.mismatches,
+        freshResult.jobContext,
+        location.href,
+        snap,
+        linkedInJobKeyFromUrl,
+      );
+
       if (answers.length === 0 && mismatches.length === 0) return;
 
       try {
@@ -245,7 +284,7 @@ export default defineContentScript({
           answers,
           mismatches,
           trigger,
-          jobContext: freshResult.jobContext,
+          jobContext,
           url: location.href,
           host: location.host,
         };
@@ -254,7 +293,7 @@ export default defineContentScript({
       browser.runtime
         .sendMessage({
           type: 'JOBIBI_CAPTURE',
-          payload: { answers, mismatches, jobContext: freshResult.jobContext, trigger, url: location.href, host: location.host },
+          payload: { answers, mismatches, jobContext, trigger, url: location.href, host: location.host },
         })
         .catch(() => {});
 
@@ -297,26 +336,99 @@ export default defineContentScript({
       runCapture(trigger);
     };
 
-    const onSubmitCapture = () => scheduleCapture('submit', 150);
+    const onSubmitCapture = () => {
+      // Snapshot before the submit default action navigates (light-DOM forms).
+      stashSnapshotIfAny();
+      scheduleCapture('submit', 150);
+    };
     document.addEventListener('submit', onSubmitCapture, true);
 
+    // Expanded submit-like button selector. LinkedIn's Easy Apply buttons are
+    // often <button aria-label="Continue to next step"> / "Review your
+    // application" / "Submit application", tagged with data-control-name.
+    const BUTTON_SELECTOR = [
+      'button[type="submit"]',
+      'input[type="submit"]',
+      'button[aria-label*="Submit" i]',
+      'button[aria-label*="Continue" i]',
+      'button[aria-label*="Next" i]',
+      'button[aria-label*="Review" i]',
+      'button[aria-label*="Save" i]',
+      'button[aria-label*="Update" i]',
+      'button[data-control-name*="submit" i]',
+      'button[data-control-name*="continue" i]',
+      'button[data-control-name*="next" i]',
+      'button[data-control-name*="review" i]',
+      '[data-testid*="submit" i]',
+      '[data-testid*="continue" i]',
+      '[data-testid*="next" i]',
+      '[data-testid*="review" i]',
+    ].join(', ');
+
+    // Broader matchers with no reliable intent signal on their own — only fire
+    // capture when the element's visible text also passes isSubmitText().
+    const BROAD_BUTTON_SELECTOR = [
+      'a[role="button"]',
+      '[class*="submit" i]',
+      '[class*="continue" i]',
+      '[class*="next" i]',
+      '[class*="review" i]',
+    ].join(', ');
+
+    const isSubmitText = (raw: string): boolean => {
+      const t = raw.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (/^(submit|continue|next|update|save|save and continue|review|done|next step|submit application|review application)$/.test(t)) return true;
+      // Contains-match with a step indicator ("Continue to next step", "Review →").
+      return /(^|\s)(continue|review|next|submit|save|update)(\s|$|\(|•|→|›|:)/.test(t);
+    };
+
+    // Take the eager pre-navigation snapshot once per user action.
+    const stashSnapshotIfAny = () => {
+      if (pendingCaptureSnapshot) return;
+      const snap = captureSnapshotNow();
+      if (snap) pendingCaptureSnapshot = snap;
+    };
+
+    // LinkedIn renders the Easy Apply form behind #interop-outlet's open shadow
+    // root; at a document-level listener e.target is retargeted to the shadow
+    // host, so closest() never sees the real button. Walk composedPath() instead
+    // to reach across the shadow boundary.
+    const findInComposedPath = (e: Event, selector: string): Element | null => {
+      const path = e.composedPath?.() ?? [];
+      for (const node of path) {
+        const el = node as Element;
+        if (el && typeof el.matches === 'function') {
+          try {
+            if (el.matches(selector)) return el;
+          } catch {
+            // invalid selector — skip
+          }
+        }
+      }
+      return null;
+    };
+
     const onClickCapture = (e: Event) => {
-      const target = e.target as Element | null;
-      if (!target) return;
-      const submitEl = target.closest(
-        'button[type="submit"], input[type="submit"], button[data-automation*="submit" i], [class*="submit" i], [data-testid*="submit" i], button[aria-label*="Submit" i], button[aria-label*="Continue" i], button[data-testid*="continue" i], [class*="continue" i], button[aria-label*="Update" i], [data-testid*="update" i], button[aria-label*="Save" i], [data-testid*="save" i]',
-      );
+      const submitEl = findInComposedPath(e, BUTTON_SELECTOR);
       if (submitEl) {
+        stashSnapshotIfAny();
         scheduleCapture('click-submit', 300);
         return;
       }
-      // textContent fallback for ATS-specific labels (Update, Save, etc.)
-      const btn = (e.target as Element | null)?.closest('button, input[type="submit"]');
-      if (btn) {
-        const text = btn.textContent?.trim() ?? '';
-        if (/^(submit|continue|next|update|save|save and continue|review|done|next step)$/i.test(text)) {
-          scheduleCapture('click-text-match', 300);
-        }
+      // Broad matchers (a[role=button], generic submit/continue/next/review
+      // class substrings) have no reliable intent on their own — require the
+      // element's visible text to also look like a submission action.
+      const broadEl = findInComposedPath(e, BROAD_BUTTON_SELECTOR);
+      if (broadEl && isSubmitText(broadEl.textContent ?? '')) {
+        stashSnapshotIfAny();
+        scheduleCapture('click-submit', 300);
+        return;
+      }
+      // textContent fallback for ATS-specific labels (Update, Save, Review, etc.)
+      const btn = findInComposedPath(e, 'button, input[type="submit"], a[role="button"]');
+      if (btn && isSubmitText(btn.textContent ?? '')) {
+        stashSnapshotIfAny();
+        scheduleCapture('click-text-match', 300);
       }
     };
     document.addEventListener('click', onClickCapture, true);

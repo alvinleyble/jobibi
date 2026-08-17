@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { startFixtureServer, type FixtureServer } from './helpers/server';
-import { launchExtensionContext, openSidepanel, seedSession, getAtsUrl, getRoleRequirementsUrl, type TestExtensionContext } from './helpers/extension';
+import { launchExtensionContext, openSidepanel, seedSession, getAtsUrl, getRoleRequirementsUrl, getLinkedInReviewUrl, type TestExtensionContext } from './helpers/extension';
 
 test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
   let server: FixtureServer;
@@ -159,6 +159,82 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
 
     // No PH_Q_ tokens leak into any answer text or field identity
     expect(JSON.stringify(captureRequestBody.answers)).not.toContain('PH_Q_');
+  });
+
+  test('LinkedIn: eager snapshot captures a multi-select checkbox group when Next navigates through the shadow root', async () => {
+    const sidepanel = await openSidepanel(ext.context, ext.extensionId);
+    await seedSession(sidepanel, { isBetaTester: true });
+    await sidepanel.reload();
+    await sidepanel.waitForLoadState('domcontentloaded');
+
+    let captureRequestBody: any = null;
+
+    await ext.context.route('**/functions/v1/capture', async (route) => {
+      const postData = route.request().postDataJSON();
+      captureRequestBody = postData;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          inserted: 2,
+          droppedMismatched: 0,
+          droppedSensitive: 0,
+          sensitiveRejections: [],
+        }),
+      });
+    });
+
+    // Open the LinkedIn Easy Apply review fixture (questions step + Next → Review)
+    const atsPage = await ext.context.newPage();
+    const url = getLinkedInReviewUrl(server.port);
+    await atsPage.goto(url);
+    await atsPage.waitForLoadState('domcontentloaded');
+
+    // The sidepanel lists both questions (extraction pierces the shadow root).
+    await sidepanel.bringToFront();
+    await expect(sidepanel.locator('text=What are the testing tools and methods have you worked with?')).toBeVisible({
+      timeout: 7000,
+    });
+    await expect(sidepanel.locator('text=Tell us about a time you improved test suite reliability.')).toBeVisible();
+
+    // Answer the fields inside the shadow root (Playwright pierces open shadow DOM).
+    await atsPage.bringToFront();
+    await atsPage.locator('#tool-0').check(); // Automatic testing
+    await atsPage.locator('#tool-1').check(); // Black-box testing
+    await atsPage.locator('#urn:li:fs_easyApplyFormElement:text').fill('I built a parallel CI lane that halved suite runtime.');
+
+    // Click Next — the SPA swaps the questions step for Review before the
+    // deferred capture runs, so only the eager click snapshot can save this step.
+    await atsPage.locator('#next-btn').click();
+
+    // Review step is now visible (SPA navigated in place)
+    await expect(atsPage.locator('#review-step')).toBeVisible({ timeout: 5000 });
+
+    // Capture payload still carries the answered step, merged from the snapshot.
+    await sidepanel.bringToFront();
+    await expect(sidepanel.locator('text=Saved 2 answers to memory')).toBeVisible({ timeout: 7000 });
+
+    expect(captureRequestBody).not.toBeNull();
+    expect(captureRequestBody.answers).toBeInstanceOf(Array);
+    expect(captureRequestBody.answers.length).toBeGreaterThanOrEqual(2);
+
+    const tools = captureRequestBody.answers.find((a: any) =>
+      a.questionLabel.includes('testing tools and methods'),
+    );
+    expect(tools).toBeDefined();
+    expect(tools.answerText).toBe('Automatic testing, Black-box testing');
+    expect(tools.mappingVerified).toBe(true);
+
+    const text = captureRequestBody.answers.find((a: any) =>
+      a.questionLabel.includes('improved test suite reliability'),
+    );
+    expect(text).toBeDefined();
+    expect(text.answerText).toBe('I built a parallel CI lane that halved suite runtime.');
+
+    // Job context resolved from the light DOM behind the modal
+    expect(captureRequestBody.application.roleTitle).toBe('Staff Automation Engineer');
+    expect(captureRequestBody.application.company).toBe('InnoTech Solutions');
   });
 
   test('Memory tab reactively refreshes and shows captured answers immediately without reload (D-2)', async () => {

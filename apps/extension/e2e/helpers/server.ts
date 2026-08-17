@@ -74,6 +74,15 @@ export function startFixtureServer(port = 0): Promise<FixtureServer> {
         }
       }
 
+      if (pathname.includes('linkedin-review') || pathname.includes('easy-apply-review')) {
+        const file = path.join(fixturesDir, 'linkedin-review.html');
+        if (fs.existsSync(file)) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(fs.readFileSync(file));
+          return;
+        }
+      }
+
       if (pathname.includes('linkedin') || pathname.includes('easy-apply') || pathname.includes('jobs/view')) {
         const file = path.join(fixturesDir, 'linkedin-easy-apply.html');
         if (fs.existsSync(file)) {

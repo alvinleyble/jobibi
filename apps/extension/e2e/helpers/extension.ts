@@ -236,3 +236,7 @@ export function getAtsUrl(atsType: AtsType, port: number): string {
 export function getRoleRequirementsUrl(port: number): string {
   return `http://ph.jobstreet.com:${port}/apply/role-requirements`;
 }
+
+export function getLinkedInReviewUrl(port: number): string {
+  return `http://www.linkedin.com:${port}/jobs/view/789/linkedin-review`;
+}

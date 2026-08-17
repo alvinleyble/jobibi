@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>LinkedIn Easy Apply - Staff Automation Engineer (Next → Review)</title>
+</head>
+<body>
+  <div class="job-view-layout">
+    <h1 class="jobs-unified-top-card__job-title">Staff Automation Engineer</h1>
+    <a class="jobs-unified-top-card__company-name">InnoTech Solutions</a>
+    <div class="jobs-description-content__text">
+      We are looking for an experienced Staff Automation Engineer to lead E2E testing architecture, test lanes, and quality assurance.
+    </div>
+
+    <!-- LinkedIn renders the Easy Apply modal inside an OPEN shadow root under
+         #interop-outlet. The fixture attaches it via script so the content
+         script's shadow-piercing paths (extraction, capture, composedPath
+         click) are exercised exactly as on the live page. -->
+    <div id="interop-outlet"></div>
+  </div>
+
+  <script>
+    const options = [
+      'Automatic testing',
+      'Black-box testing',
+      'White-box testing',
+      'Unit testing',
+      'Integration testing',
+      'Regression testing',
+      'Smoke testing',
+      'API testing',
+      'Load testing',
+      'Performance testing',
+      'Security testing',
+      'Cross-browser testing',
+      'Mobile testing',
+      'Accessibility testing',
+      'Usability testing',
+    ];
+
+    const checkboxMarkup = options
+      .map(
+        (opt, i) =>
+          `<label class="multi-select-option"><input type="checkbox" id="tool-${i}" name="testing_tools" value="${opt}"><span>${opt}</span></label>`,
+      )
+      .join('');
+
+    const host = document.getElementById('interop-outlet');
+    const sr = host.attachShadow({ mode: 'open' });
+    sr.innerHTML = `
+      <div class="jobs-easy-apply-modal artdeco-modal artdeco-modal--is-open" role="dialog" aria-labelledby="easy-apply-header">
+        <div class="jobs-easy-apply-content">
+          <div id="questions-step">
+            <h3 id="easy-apply-header" class="t-16 t-bold">Additional Questions</h3>
+            <form>
+              <div class="fb-dash-form-element">
+                <label for="urn:li:fs_easyApplyFormElement:text">Tell us about a time you improved test suite reliability.</label>
+                <textarea id="urn:li:fs_easyApplyFormElement:text" name="test_reliability"></textarea>
+              </div>
+              <div class="fb-dash-form-element">
+                <fieldset>
+                  <legend>What are the testing tools and methods have you worked with?</legend>
+                  ${checkboxMarkup}
+                </fieldset>
+              </div>
+              <div class="jobs-easy-apply-footer">
+                <button type="button" id="next-btn" aria-label="Continue to next step" data-control-name="continue_unify" class="artdeco-button artdeco-button--primary">Next</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="review-step" style="display:none">
+            <h3 class="t-16 t-bold">Review your application</h3>
+            <div class="review-summary">
+              <div class="review-item">
+                <span class="review-question">Tell us about a time you improved test suite reliability.</span>
+                <span class="review-answer">I improved it by adding CI.</span>
+              </div>
+              <div class="review-item">
+                <span class="review-question">What are the testing tools and methods have you worked with?</span>
+                <span class="review-answer">Automatic testing, Black-box testing</span>
+              </div>
+            </div>
+            <div class="jobs-easy-apply-footer">
+              <button type="button" id="submit-btn" aria-label="Submit application" data-control-name="submit_application" class="artdeco-button artdeco-button--primary">Submit application</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Emulate the SPA step transition: Next swaps the questions step for the
+    // Review step in place (the page never reloads). The content script's eager
+    // snapshot must run on the click BEFORE this handler hides the fields.
+    sr.querySelector('#next-btn').addEventListener('click', () => {
+      sr.querySelector('#questions-step').style.display = 'none';
+      sr.querySelector('#review-step').style.display = 'block';
+    });
+  </script>
+</body>
+</html>
