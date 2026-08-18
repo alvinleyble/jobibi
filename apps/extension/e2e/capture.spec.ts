@@ -397,4 +397,113 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
     expect(captureRequestBody.application.roleTitle).toBe('Senior Frontend Engineer');
     expect(captureRequestBody.application.company).toBe('Indeed Solutions Inc.');
   });
+
+  test('Persistent Capture Toast remains visible after 4+ seconds, Undo removes captured answers, and ✕ dismisses toast (Items 7 & 8)', async () => {
+    const sidepanel = await openSidepanel(ext.context, ext.extensionId);
+    await seedSession(sidepanel, { isBetaTester: true });
+    await sidepanel.reload();
+    await sidepanel.waitForLoadState('domcontentloaded');
+
+    let capturedRows: any[] = [];
+    let deleteQaCalled = false;
+
+    await sidepanel.unroute('**/rest/v1/qa_pairs*');
+    await sidepanel.route('**/rest/v1/qa_pairs*', async (route) => {
+      if (route.request().method() === 'DELETE') {
+        deleteQaCalled = true;
+        capturedRows = [];
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([]),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(capturedRows),
+      });
+    });
+
+    await sidepanel.route('**/rest/v1/memory_chunks*', async (route) => {
+      if (route.request().method() === 'DELETE') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([]),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
+
+    // Intercept capture Edge function returning insertedIds
+    await ext.context.route('**/functions/v1/capture', async (route) => {
+      capturedRows = [
+        {
+          id: 'qa-undo-test-1',
+          question_label: 'Why do you want to work at TechCorp?',
+          question_norm: 'why do you want to work at techcorp',
+          answer_text: 'I want to work at TechCorp because of its strong engineering culture and mission.',
+          origin: 'user_written',
+          created_at: new Date().toISOString(),
+        },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          inserted: 1,
+          insertedIds: ['qa-undo-test-1'],
+          droppedMismatched: 0,
+        }),
+      });
+    });
+
+    // Open JobStreet application page
+    const atsPage = await ext.context.newPage();
+    const url = getAtsUrl('jobstreet', server.port);
+    await atsPage.goto(url);
+    await atsPage.waitForLoadState('domcontentloaded');
+
+    await atsPage.locator('#PH_Q_101_V1').fill('I want to work at TechCorp because of its strong engineering culture and mission.');
+    await atsPage.locator('button[data-automation="submit-application"]').click();
+
+    // 1. Verify toast appears with Undo button
+    await sidepanel.bringToFront();
+    const toast = sidepanel.getByTestId('capture-toast');
+    await expect(toast).toBeVisible({ timeout: 7000 });
+    await expect(toast).toContainText('Saved 1 answer to memory');
+    await expect(sidepanel.getByTestId('capture-undo-btn')).toBeVisible();
+
+    // 2. Verify toast is PERSISTENT (remains visible after 4+ seconds, not auto-hidden)
+    await sidepanel.waitForTimeout(4500);
+    await expect(toast).toBeVisible();
+
+    // Switch to Memory tab to see answer stored
+    await sidepanel.click('[data-testid="tab-memory-btn"]');
+    await expect(sidepanel.locator('text=Stored answers · 1')).toBeVisible({ timeout: 5000 });
+
+    // 3. Click Undo button in persistent toast
+    await sidepanel.getByTestId('capture-undo-btn').click();
+
+    // Verify toast confirms "Capture undone" and Undo button is removed
+    await expect(toast).toContainText('Capture undone');
+    await expect(sidepanel.getByTestId('capture-undo-btn')).toHaveCount(0);
+
+    // Verify memory bank reactively refreshes and reflects 0 stored answers
+    await expect(sidepanel.locator('text=Stored answers · 0')).toBeVisible({ timeout: 5000 });
+    expect(deleteQaCalled).toBe(true);
+
+    // 4. Click dismiss '✕' button
+    await sidepanel.getByTestId('capture-dismiss-btn').click();
+    await expect(toast).toHaveCount(0);
+  });
 });
+

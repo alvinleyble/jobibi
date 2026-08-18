@@ -98,9 +98,11 @@ export async function handleCapture(payload: CapturePayload): Promise<{ ok: bool
     }
 
     if (data) {
-      const result = data as { inserted?: number; droppedMismatched?: number; [key: string]: unknown };
+      const result = data as { inserted?: number; droppedMismatched?: number; insertedIds?: string[]; [key: string]: unknown };
       const captureRecord = {
         at: Date.now(),
+        url: payload.url,
+        jobContext: payload.jobContext,
         ...result,
       };
 
@@ -111,7 +113,11 @@ export async function handleCapture(payload: CapturePayload): Promise<{ ok: bool
       await browser.runtime
         .sendMessage({
           type: 'JOBIBI_CAPTURE_COMPLETED',
-          payload: result,
+          payload: {
+            ...result,
+            url: payload.url,
+            jobContext: payload.jobContext,
+          },
         })
         .catch(() => {});
 

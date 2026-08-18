@@ -112,6 +112,42 @@ describe('MemoryBank reactive refresh mechanism', () => {
     expect(refreshMock).toHaveBeenCalledTimes(1);
   });
 
+  it('triggers refresh when JOBIBI_CAPTURE_UNDONE message arrives', () => {
+    let messageListener: ((msg: unknown) => void) | null = null;
+    vi.spyOn(browser.runtime.onMessage, 'addListener').mockImplementation((fn: unknown) => {
+      messageListener = fn as (msg: unknown) => void;
+    });
+
+    const refreshMock = vi.fn();
+
+    let timer: NodeJS.Timeout | null = null;
+    const triggerRefresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        refreshMock();
+      }, 250);
+    };
+
+    const onMsg = (m: unknown) => {
+      if (typeof m === 'object' && m !== null) {
+        const msg = m as { type?: string };
+        if (msg.type === 'JOBIBI_CAPTURE_COMPLETED' || msg.type === 'JOBIBI_CAPTURE_UNDONE') {
+          triggerRefresh();
+        }
+      }
+    };
+    browser.runtime.onMessage.addListener(onMsg as Parameters<typeof browser.runtime.onMessage.addListener>[0]);
+
+    if (messageListener) {
+      const invoke = messageListener as (msg: unknown) => void;
+      invoke({ type: 'JOBIBI_CAPTURE_UNDONE', payload: { insertedIds: ['qa-1'] } });
+    }
+    expect(refreshMock).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(250);
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+  });
+
   it('triggers refresh when jobibi_last_capture storage changes', () => {
     let storageListener: ((changes: Record<string, unknown>, area: string) => void) | null = null;
     vi.spyOn(browser.storage.onChanged, 'addListener').mockImplementation((fn: unknown) => {
@@ -129,7 +165,7 @@ describe('MemoryBank reactive refresh mechanism', () => {
     };
 
     const onStore = (changes: Record<string, unknown>, area: string) => {
-      if (area === 'local' && 'jobibi_last_capture' in changes) {
+      if (area === 'local' && ('jobibi_last_capture' in changes || 'jobibi_last_capture_undone' in changes)) {
         triggerRefresh();
       }
     };
@@ -148,13 +184,21 @@ describe('MemoryBank reactive refresh mechanism', () => {
     vi.advanceTimersByTime(250);
     expect(refreshMock).toHaveBeenCalledTimes(1);
 
+    // Test jobibi_last_capture_undone storage event
+    if (storageListener) {
+      const invoke = storageListener as (changes: Record<string, unknown>, area: string) => void;
+      invoke({ jobibi_last_capture_undone: { newValue: { insertedIds: ['qa-1'] } } }, 'local');
+    }
+    vi.advanceTimersByTime(250);
+    expect(refreshMock).toHaveBeenCalledTimes(2);
+
     // Ignore changes in other storage areas (e.g. sync)
     if (storageListener) {
       const invoke = storageListener as (changes: Record<string, unknown>, area: string) => void;
       invoke({ jobibi_last_capture: { newValue: { inserted: 2 } } }, 'sync');
     }
     vi.advanceTimersByTime(300);
-    expect(refreshMock).toHaveBeenCalledTimes(1);
+    expect(refreshMock).toHaveBeenCalledTimes(2);
   });
 
   it('debounces rapid burst of capture events into a single refresh call', () => {
