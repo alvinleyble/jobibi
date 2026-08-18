@@ -310,54 +310,69 @@ function App() {
     setCaptureToast((prev) => (prev ? { ...prev, isUndoing: true, error: undefined } : null));
 
     try {
-      // 1. Fetch matching qa_pairs so we know the questions/answers to purge from memory_chunks
-      const { data: qaRows, error: fetchError } = await supabase
+      // 1. Fetch all of the user's qa_pairs so we can tell which memory_chunks are
+      // uniquely owned by this capture vs. shared with a still-valid duplicate answer
+      const { data: allQaRows, error: fetchError } = await supabase
         .from('qa_pairs')
         .select('id, question_label, answer_text')
-        .in('id', idsToUndo)
         .eq('user_id', userId);
 
       if (fetchError) {
-        console.warn('[Undo] Failed to fetch qa_pairs before delete:', fetchError);
+        throw fetchError;
       }
 
-      if (qaRows && qaRows.length > 0) {
-        const itemTexts = new Set(qaRows.map((qa) => `Q: ${qa.question_label}\nA: ${qa.answer_text}`));
-        const itemNorms = new Set(qaRows.map((qa) => normalizeQuestion(qa.question_label)));
+      const idsToUndoSet = new Set(idsToUndo);
+      const qaRows = (allQaRows ?? []).filter((qa) => idsToUndoSet.has(qa.id));
+      const remainingRows = (allQaRows ?? []).filter((qa) => !idsToUndoSet.has(qa.id));
 
-        const { data: chunkRows } = await supabase
-          .from('memory_chunks')
-          .select('id, text')
-          .eq('user_id', userId)
-          .eq('type', 'qa_pair');
+      if (qaRows.length > 0) {
+        const remainingTexts = new Set(
+          remainingRows.map((qa) => `Q: ${qa.question_label}\nA: ${qa.answer_text}`),
+        );
+        const remainingNorms = new Set(remainingRows.map((qa) => normalizeQuestion(qa.question_label)));
 
-        const chunkIdsToDelete: string[] = [];
-        if (chunkRows) {
-          for (const ch of chunkRows as Array<{ id: string; text: string }>) {
-            const qPart = ch.text.startsWith('Q: ')
-              ? (ch.text.split('\nA:')[0]?.slice(2).trim() ?? ch.text)
-              : ch.text;
-            if (itemTexts.has(ch.text) || itemNorms.has(normalizeQuestion(qPart))) {
-              chunkIdsToDelete.push(ch.id);
+        const itemTexts = new Set<string>();
+        const itemNorms = new Set<string>();
+        for (const qa of qaRows) {
+          const text = `Q: ${qa.question_label}\nA: ${qa.answer_text}`;
+          const norm = normalizeQuestion(qa.question_label);
+          if (!remainingTexts.has(text)) itemTexts.add(text);
+          if (!remainingNorms.has(norm)) itemNorms.add(norm);
+        }
+
+        if (itemTexts.size > 0 || itemNorms.size > 0) {
+          const { data: chunkRows, error: chunkFetchError } = await supabase
+            .from('memory_chunks')
+            .select('id, text')
+            .eq('user_id', userId)
+            .eq('type', 'qa_pair');
+
+          if (chunkFetchError) {
+            throw chunkFetchError;
+          }
+
+          const chunkIdsToDelete: string[] = [];
+          if (chunkRows) {
+            for (const ch of chunkRows as Array<{ id: string; text: string }>) {
+              const qPart = ch.text.startsWith('Q: ')
+                ? (ch.text.split('\nA:')[0]?.slice(2).trim() ?? ch.text)
+                : ch.text;
+              if (itemTexts.has(ch.text) || itemNorms.has(normalizeQuestion(qPart))) {
+                chunkIdsToDelete.push(ch.id);
+              }
             }
           }
-        }
-        if (chunkIdsToDelete.length > 0) {
-          await supabase
-            .from('memory_chunks')
-            .delete()
-            .in('id', chunkIdsToDelete)
-            .eq('user_id', userId);
-        }
+          if (chunkIdsToDelete.length > 0) {
+            const { error: chunkDeleteError } = await supabase
+              .from('memory_chunks')
+              .delete()
+              .in('id', chunkIdsToDelete)
+              .eq('user_id', userId);
 
-        // Direct fallback deletion by exact text
-        for (const qa of qaRows) {
-          await supabase
-            .from('memory_chunks')
-            .delete()
-            .eq('user_id', userId)
-            .eq('type', 'qa_pair')
-            .eq('text', `Q: ${qa.question_label}\nA: ${qa.answer_text}`);
+            if (chunkDeleteError) {
+              throw chunkDeleteError;
+            }
+          }
         }
       }
 
