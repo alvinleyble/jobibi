@@ -177,6 +177,12 @@
   2. **Tests**: `linkedin.test.ts` gained fixtures for the two step detectors, label matching, and the combined guard behavior.
   3. **Verification**: `packages/shared` unit tests pass, `tsc --noEmit` clean.
 
+- 2026-08-18 — **D24 Pick-list questions: no prose, no button, zero tokens** on branch `fm/jobibi-picklist-no-prose`.
+  1. **Pick-list identification & deterministic code-level response (`packages/shared/src/adapters/types.ts`, `supabase/functions/suggest/index.ts`)**: Questions with `fieldType in ('select', 'radio', 'checkbox')` are classified as pick-lists (`isPickListFieldType`). In `suggest`, returns a fixed response (`outcome: 'pick_list'`, message `"Pick from the options on the page."`) directly in code before retrieval, quota checks, and the gate, with 0 model/LLM calls and zero token consumption.
+  2. **Invariants preserved**: Pick-list questions do not write to `gate_decisions` (avoiding fake refusal pollution in D15 calibration data). Question extraction is unchanged across all adapters so submission capture continues reading and storing selected/ticked values (D12). `number`, `text`, and `textarea` questions remain normal drafting questions through the gate.
+  3. **Sidepanel UI (`SuggestCard.tsx`)**: Renders a simple line `"Pick from the options on the page."` and omits the Suggest an answer button for pick-list questions.
+  4. **Verification**: Added unit tests in `packages/shared/src/adapters/picklist.test.ts`, `packages/shared/src/gate/picklistSuggest.test.ts`, and component tests in `apps/extension/entrypoints/sidepanel/suggestCard.test.ts`. All 328 shared unit tests, 39 extension unit tests, and 26 Playwright E2E tests pass.
+
 ## Still open
 
 - **D9** — business entity, blocking only for payments.

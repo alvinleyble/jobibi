@@ -10,6 +10,7 @@ import { decideGate, ROLE_THRESHOLD } from '../../../packages/shared/src/gate/ga
 import { cosine, hybridScore, keywordOverlap } from '../../../packages/shared/src/gate/retrieve.ts';
 import { findSeenBefore } from '../../../packages/shared/src/capture/capture.ts';
 import type { QaPairRow } from '../../../packages/shared/src/capture/capture.ts';
+import { isPickListFieldType, PICK_LIST_MESSAGE } from '../../../packages/shared/src/adapters/types.ts';
 import {
   OUTPUT_LENGTH_CONFIG,
   DAILY_SUGGESTION_LIMIT,
@@ -32,13 +33,15 @@ const SuggestRequestSchema = z.object({
     role: z.string().min(1),
     company: z.string().min(1),
   }),
+  fieldType: z.string().optional(),
 });
 
 const SuggestResponseSchema = z.object({
-  outcome: z.enum(['draft', 'ask', 'refuse']),
+  outcome: z.enum(['draft', 'ask', 'refuse', 'pick_list']),
   questionNorm: z.string(),
-  questionMatch: z.number(),
-  roleMatch: z.number(),
+  questionMatch: z.number().optional(),
+  roleMatch: z.number().optional(),
+  message: z.string().optional(),
   // draft
   answer: z.string().optional(),
   skeleton: z.array(z.string()).optional(),
@@ -159,6 +162,23 @@ Deno.serve(async (req) => {
     const parsed = SuggestRequestSchema.safeParse(body);
     if (!parsed.success) return jsonResponse({ error: 'Please provide a valid question and job details to get a suggestion.' }, 400);
 
+    const questionNorm = normalizeQuestion(parsed.data.question);
+
+    // ── D24: Pick-list questions (select/radio/checkbox) — zero tokens, code-only, no gate_decisions ──
+    if (isPickListFieldType(parsed.data.fieldType)) {
+      return jsonResponse(
+        SuggestResponseSchema.parse({
+          outcome: 'pick_list',
+          questionNorm,
+          questionMatch: 0,
+          roleMatch: 0,
+          message: PICK_LIST_MESSAGE,
+          refuseMessage: PICK_LIST_MESSAGE,
+        }),
+        200,
+      );
+    }
+
     // ── S12: Profile, Beta Status, and Daily Quota Enforcement ──
     const { data: profileRow } = await supabase
       .from('profiles')
@@ -192,7 +212,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    const questionNorm = normalizeQuestion(parsed.data.question);
     const jobText = `${parsed.data.jobContext.role} ${parsed.data.jobContext.company}`;
 
     // ── S6 seen-before check (D12) — surface prior answer for near-duplicate ──

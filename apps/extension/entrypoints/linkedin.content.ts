@@ -467,7 +467,7 @@ export default defineContentScript({
       if (typeof message === 'object' && message !== null) {
         const t = (message as { type?: string }).type;
         if (t === 'JOBIBI_REQUEST_QUESTIONS') {
-          if (!lastResult) lastResult = extractLinkedInQuestions(document);
+          if (!lastResult || lastResult.questions.length === 0) lastResult = extractLinkedInQuestions(document);
           sendResponse({ type: 'JOBIBI_QUESTIONS', payload: lastResult });
           return true;
         }

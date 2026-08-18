@@ -263,7 +263,11 @@ export function isReviewStep(container: Element): boolean {
     '[data-test-step="review"]',
   ];
   for (const sel of reviewStepSelectors) {
-    if (container.matches?.(sel) || container.querySelector?.(sel)) {
+    if (container.matches?.(sel) && isVisible(container)) {
+      return true;
+    }
+    const matched = container.querySelectorAll?.(sel);
+    if (matched && Array.from(matched).some((el) => isVisible(el))) {
       return true;
     }
   }
@@ -295,6 +299,7 @@ export function isReviewStep(container: Element): boolean {
   }
 
   for (const h of headings) {
+    if (!isVisible(h)) continue;
     const text = cleanLabel(h.textContent || '');
     if (isReviewHeadingText(text)) {
       return true;
@@ -318,7 +323,11 @@ export function isContactInfoStep(container: Element): boolean {
     '[data-test-step="contact-info"]',
   ];
   for (const sel of contactStepSelectors) {
-    if (container.matches?.(sel) || container.querySelector?.(sel)) {
+    if (container.matches?.(sel) && isVisible(container)) {
+      return true;
+    }
+    const matched = container.querySelectorAll?.(sel);
+    if (matched && Array.from(matched).some((el) => isVisible(el))) {
       return true;
     }
   }
@@ -350,6 +359,7 @@ export function isContactInfoStep(container: Element): boolean {
   }
 
   for (const h of headings) {
+    if (!isVisible(h)) continue;
     const text = cleanLabel(h.textContent || '');
     if (isContactInfoHeadingText(text)) {
       return true;
