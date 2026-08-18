@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Indeed Apply - Senior Frontend Engineer (Step Transition)</title>
+</head>
+<body>
+  <div class="ia-JobHeader">
+    <h1 class="ia-JobHeader-title" data-testid="jobTitle">Senior Frontend Engineer</h1>
+    <span class="ia-JobHeader-company" data-testid="companyName">Indeed Solutions Inc.</span>
+  </div>
+
+  <div id="indeed-apply-questions-module" class="ia-QuestionsModule">
+    <div id="questions-step-1">
+      <h2>Questions from the employer</h2>
+      <form id="indeedApplyForm">
+        <!-- Text question with label-for -->
+        <div class="ia-Questions-item">
+          <label for="q_years">How many years of experience do you have with TypeScript?</label>
+          <input type="text" id="q_years" name="experience_ts" class="ia-Input" />
+        </div>
+
+        <!-- Checkbox group with legend -->
+        <div class="ia-Questions-item">
+          <fieldset>
+            <legend>Which frontend frameworks have you used in production?</legend>
+            <label class="ia-Checkbox"><input type="checkbox" id="fw-react" name="frameworks" value="react" /> React</label>
+            <label class="ia-Checkbox"><input type="checkbox" id="fw-vue" name="frameworks" value="vue" /> Vue.js</label>
+            <label class="ia-Checkbox"><input type="checkbox" id="fw-svelte" name="frameworks" value="svelte" /> Svelte</label>
+          </fieldset>
+        </div>
+
+        <!-- Radio question group -->
+        <div class="ia-Questions-item">
+          <fieldset>
+            <legend>Are you comfortable with remote work?</legend>
+            <label><input type="radio" id="remote-yes" name="remote_work" value="yes" /> Yes, 100% remote</label>
+            <label><input type="radio" id="remote-no" name="remote_work" value="no" /> No, prefer on-site</label>
+          </fieldset>
+        </div>
+
+        <div class="ia-Form-actions">
+          <button type="button" id="continue-step-btn" class="ia-continueButton" data-testid="continue-button" aria-label="Continue to next step">Continue</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Review step: displayed after clicking Continue -->
+    <div id="review-step" style="display:none">
+      <h2>Review your application</h2>
+      <div class="review-summary">
+        <p>Your answers have been recorded for review.</p>
+      </div>
+      <div class="ia-Form-actions">
+        <button type="button" id="submit-app-btn" class="ia-continueButton" data-testid="submit-button" aria-label="Submit application">Submit application</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Emulate SPA step transition: clicking Continue immediately swaps Step 1 out for Review Step in place
+    document.getElementById('continue-step-btn').addEventListener('click', () => {
+      document.getElementById('questions-step-1').style.display = 'none';
+      document.getElementById('review-step').style.display = 'block';
+    });
+  </script>
+</body>
+</html>

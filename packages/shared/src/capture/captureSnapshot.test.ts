@@ -3,6 +3,7 @@ import {
   isSameApplication,
   resolveCapturePayload,
   linkedInJobKeyFromUrl,
+  indeedJobKeyFromUrl,
   defaultJobKeyFromUrl,
   type CaptureSnapshot,
   type CaptureAnswerEntry,
@@ -55,6 +56,47 @@ describe('linkedInJobKeyFromUrl', () => {
 describe('defaultJobKeyFromUrl', () => {
   it('returns the path before /apply/', () => {
     expect(defaultJobKeyFromUrl('https://ph.jobstreet.com/jobs/123/apply/role-requirements')).toBe('/jobs/123');
+  });
+});
+
+describe('indeedJobKeyFromUrl', () => {
+  it('extracts jk query parameter from viewjob URL', () => {
+    expect(indeedJobKeyFromUrl('https://www.indeed.com/viewjob?jk=abc12345')).toBe('jk:abc12345');
+  });
+
+  it('extracts vjk query parameter from search URL', () => {
+    expect(indeedJobKeyFromUrl('https://www.indeed.com/jobs?q=engineer&vjk=xyz98765')).toBe('jk:xyz98765');
+  });
+
+  it('extracts iaKey query parameter from SmartApply URL', () => {
+    expect(
+      indeedJobKeyFromUrl('https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/1?iaKey=ia-55555'),
+    ).toBe('jk:ia-55555');
+  });
+
+  it('extracts jobKey query parameter from SmartApply URL', () => {
+    expect(
+      indeedJobKeyFromUrl('https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/2?jobKey=jk-88888'),
+    ).toBe('jk:jk-88888');
+  });
+
+  it('extracts /beta/indeedapply/form prefix for SmartApply step transitions without query params', () => {
+    expect(
+      indeedJobKeyFromUrl('https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/1'),
+    ).toBe('/beta/indeedapply/form');
+    expect(
+      indeedJobKeyFromUrl('https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/2'),
+    ).toBe('/beta/indeedapply/form');
+    expect(
+      indeedJobKeyFromUrl('https://smartapply.indeed.com/beta/indeedapply/form/review-module'),
+    ).toBe('/beta/indeedapply/form');
+    expect(
+      indeedJobKeyFromUrl('https://smartapply.indeed.com/beta/indeedapply/form/resume-selection-module'),
+    ).toBe('/beta/indeedapply/form');
+  });
+
+  it('falls back to raw url for unparseable input', () => {
+    expect(indeedJobKeyFromUrl('not a url')).toBe('not a url');
   });
 });
 
@@ -285,5 +327,55 @@ describe('resolveCapturePayload (merge in performCapture)', () => {
     );
     expect(res.usedSnapshot).toBe(false);
     expect(res.mismatches).toHaveLength(1);
+  });
+
+  it('Indeed: merges stashed snapshot across Indeed SmartApply step transitions (questions/1 -> review-module)', () => {
+    const indeedSnap: CaptureSnapshot = {
+      answers: [
+        answer('How many years of experience do you have with TypeScript?', '5 years'),
+        answer('Which frontend frameworks have you used in production?', 'React, Vue.js'),
+      ],
+      mismatches: [],
+      jobContext: { roleTitle: 'Senior Frontend Engineer', company: 'Indeed Solutions Inc.' },
+      url: 'https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/1',
+      host: 'smartapply.indeed.com',
+    };
+
+    const res = resolveCapturePayload(
+      [],
+      [],
+      { roleTitle: 'Senior Frontend Engineer', company: 'Indeed Solutions Inc.' },
+      'https://smartapply.indeed.com/beta/indeedapply/form/review-module',
+      indeedSnap,
+      indeedJobKeyFromUrl,
+    );
+
+    expect(res.usedSnapshot).toBe(true);
+    expect(res.answers).toHaveLength(2);
+    expect(res.answers[0].answerText).toBe('5 years');
+    expect(res.answers[1].answerText).toBe('React, Vue.js');
+    expect(res.jobContext.roleTitle).toBe('Senior Frontend Engineer');
+  });
+
+  it('Indeed: discards snapshot when user switched to a different Indeed job (different iaKey)', () => {
+    const indeedSnap: CaptureSnapshot = {
+      answers: [answer('How many years of experience do you have with TypeScript?', '5 years')],
+      mismatches: [],
+      jobContext: { roleTitle: 'Senior Frontend Engineer', company: 'Indeed Solutions Inc.' },
+      url: 'https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/1?iaKey=job-111',
+      host: 'smartapply.indeed.com',
+    };
+
+    const res = resolveCapturePayload(
+      [],
+      [],
+      { roleTitle: 'Senior Frontend Engineer', company: 'Indeed Solutions Inc.' },
+      'https://smartapply.indeed.com/beta/indeedapply/form/questions-module/questions/1?iaKey=job-222',
+      indeedSnap,
+      indeedJobKeyFromUrl,
+    );
+
+    expect(res.usedSnapshot).toBe(false);
+    expect(res.answers).toHaveLength(0);
   });
 });

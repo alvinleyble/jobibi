@@ -8,11 +8,12 @@ import { cleanLabel, escapeCss } from '../adapters/helpers.ts';
  * - other inputs/textarea return .value directly.
  */
 export function readHumanValue(el: Element, root: ParentNode): string {
-  if (el instanceof HTMLSelectElement) {
+  const tagName = el.tagName.toLowerCase();
+  if (el instanceof HTMLSelectElement || tagName === 'select') {
     const sel = el as HTMLSelectElement;
     // multi-select: join all selected option texts
     if (sel.multiple) {
-      const texts = Array.from(sel.selectedOptions)
+      const texts = Array.from(sel.selectedOptions || [])
         .map((o) => (o.textContent ?? '').trim())
         .filter(Boolean);
       if (texts.length) return texts.join(', ');
@@ -29,11 +30,12 @@ export function readHumanValue(el: Element, root: ParentNode): string {
     return sel.value ?? '';
   }
 
-  if (el instanceof HTMLInputElement) {
-    const t = el.type.toLowerCase();
+  if (el instanceof HTMLInputElement || tagName === 'input') {
+    const inputEl = el as HTMLInputElement;
+    const t = (inputEl.type || '').toLowerCase();
     if (t === 'checkbox' || t === 'radio') {
       if (t === 'radio') {
-        const name = el.getAttribute('name');
+        const name = inputEl.getAttribute('name');
         if (name) {
           try {
             const selector = `input[type="radio"][name="${escapeCss(name)}"]:checked`;
@@ -47,16 +49,16 @@ export function readHumanValue(el: Element, root: ParentNode): string {
           }
         }
       }
-      if (!el.checked) return '';
-      const labelText = resolveInputLabelText(el, root);
+      if (!inputEl.checked) return '';
+      const labelText = resolveInputLabelText(inputEl, root);
       if (labelText) return labelText;
-      return el.value ?? '';
+      return inputEl.value ?? '';
     }
-    return el.value ?? '';
+    return inputEl.value ?? '';
   }
 
-  if (el instanceof HTMLTextAreaElement) {
-    return el.value ?? '';
+  if (el instanceof HTMLTextAreaElement || tagName === 'textarea') {
+    return (el as HTMLTextAreaElement).value ?? '';
   }
 
   // Fallback for unknown elements
@@ -93,7 +95,10 @@ function resolveInputLabelText(input: HTMLInputElement, root: ParentNode): strin
  * Returns '' if none checked.
  */
 export function readHumanCheckboxGroupValue(firstEl: Element, root: ParentNode): string {
-  if (!(firstEl instanceof HTMLInputElement) || firstEl.type.toLowerCase() !== 'checkbox') {
+  const tagName = firstEl.tagName.toLowerCase();
+  const inputEl = firstEl as HTMLInputElement;
+  const isCheckbox = (firstEl instanceof HTMLInputElement || tagName === 'input') && (inputEl.type || '').toLowerCase() === 'checkbox';
+  if (!isCheckbox) {
     return readHumanValue(firstEl, root);
   }
   const name = firstEl.getAttribute('name');

@@ -65,6 +65,15 @@ export function startFixtureServer(port = 0): Promise<FixtureServer> {
         }
       }
 
+      if (pathname.includes('indeed-multistep') || pathname.includes('indeed-step')) {
+        const file = path.join(fixturesDir, 'indeed-multistep.html');
+        if (fs.existsSync(file)) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(fs.readFileSync(file));
+          return;
+        }
+      }
+
       if (pathname.includes('indeed') || pathname.includes('questions-module')) {
         const file = path.join(fixturesDir, 'indeed-apply.html');
         if (fs.existsSync(file)) {

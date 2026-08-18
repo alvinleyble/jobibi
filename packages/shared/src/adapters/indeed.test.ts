@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { extractIndeedQuestions } from './indeed.ts';
+import { readHumanValue, readHumanCheckboxGroupValue } from '../capture/readHumanValue.ts';
 
 function dom(html: string, url?: string) {
   const jsdom = new JSDOM(html, url ? { url } : undefined);
@@ -12,13 +13,22 @@ const QUESTIONS_MODULE_URL_PAGE_2 = 'https://smartapply.indeed.com/beta/indeedap
 const HOMEPAGE_URL = 'https://www.indeed.com/jobs?q=engineer';
 const RESUME_SELECTION_URL = 'https://smartapply.indeed.com/beta/indeedapply/form/resume-selection-module';
 
-const _css = (globalThis as unknown as { CSS?: { escape?: (s: string) => string } }).CSS;
-if (!_css?.escape) {
-  // @ts-expect-error global polyfill for test
-  globalThis.CSS = {
-    escape: (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`),
-  };
-}
+beforeAll(() => {
+  const g = globalThis as unknown as { CSS?: { escape?: (s: string) => string } };
+  if (!g.CSS?.escape) {
+    // @ts-expect-error global polyfill for test
+    globalThis.CSS = {
+      escape: (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`),
+    };
+  }
+  const jsdom = new JSDOM('');
+  const win = jsdom.window as unknown as Record<string, unknown>;
+  for (const k of ['HTMLElement', 'HTMLInputElement', 'HTMLSelectElement', 'HTMLTextAreaElement', 'Element', 'Node', 'HTMLLabelElement']) {
+    if (!(globalThis as unknown as Record<string, unknown>)[k]) {
+      (globalThis as unknown as Record<string, unknown>)[k] = win[k];
+    }
+  }
+});
 
 describe('extractIndeedQuestions', () => {
   it('extracts textarea with label-for (confidence 1.0)', () => {
@@ -350,5 +360,94 @@ describe('extractIndeedQuestions', () => {
     expect(triggersViaText('Cancel')).toBe(false);
     expect(triggersViaText('Edit')).toBe(false);
     expect(triggersViaText('')).toBe(false);
+  });
+
+  it('matches broad interactive button controls with isSubmitText on Indeed', () => {
+    const INTERACTIVE_TAGS = ['button', 'input', 'a[role="button"]', '[role="button"]'];
+    const BROAD_BUTTON_SELECTOR = [
+      'a[role="button"]',
+      ...['submit', 'continue', 'next', 'review', 'update', 'save'].flatMap((word) =>
+        INTERACTIVE_TAGS.map((tag) => `${tag}[class*="${word}" i]`),
+      ),
+    ].join(', ');
+
+    const isSubmitText = (raw: string): boolean => {
+      const t = raw.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (/^(submit|continue|next|update|save|save and continue|review|done|next step|submit application|review application)$/.test(t)) return true;
+      return /(^|\s)(continue|review|next|submit|save|update)(\s|$|\(|•|→|›|:)/.test(t);
+    };
+
+    const doc = dom(`
+      <div>
+        <a role="button" id="link-continue" class="btn">Continue to next step</a>
+        <div role="button" id="role-btn-review" class="custom-review-btn">Review application</div>
+        <button id="btn-next-step" class="action-next">Next ›</button>
+        <button id="btn-save-prog" class="save-progress">Save & Continue</button>
+        <div class="panel-review">Review your answers here: text content</div>
+      </div>
+    `);
+
+    const linkContinue = doc.querySelector('#link-continue')!;
+    expect(linkContinue.matches(BROAD_BUTTON_SELECTOR)).toBe(true);
+    expect(isSubmitText(linkContinue.textContent || '')).toBe(true);
+
+    const roleReview = doc.querySelector('#role-btn-review')!;
+    expect(roleReview.matches(BROAD_BUTTON_SELECTOR)).toBe(true);
+    expect(isSubmitText(roleReview.textContent || '')).toBe(true);
+
+    const nextStep = doc.querySelector('#btn-next-step')!;
+    expect(nextStep.matches(BROAD_BUTTON_SELECTOR)).toBe(true);
+    expect(isSubmitText(nextStep.textContent || '')).toBe(true);
+
+    const panel = doc.querySelector('.panel-review')!;
+    expect(panel.matches(BROAD_BUTTON_SELECTOR)).toBe(false);
+  });
+
+  it('resolves human values on Indeed question form fields (checkbox group, radio, select, text)', () => {
+    const doc = dom(`
+      <form id="indeedApplyForm">
+        <!-- Text question -->
+        <div>
+          <label for="q_years">Years of experience</label>
+          <input type="text" id="q_years" value="5 years">
+        </div>
+
+        <!-- Select question -->
+        <div>
+          <label for="q_notice">Notice period</label>
+          <select id="q_notice">
+            <option value="opt_0">Immediate</option>
+            <option value="opt_30" selected>30 days</option>
+          </select>
+        </div>
+
+        <!-- Radio question -->
+        <fieldset>
+          <legend>Are you willing to relocate?</legend>
+          <label><input type="radio" name="relocate" value="val_yes"> Yes, willing</label>
+          <label><input type="radio" name="relocate" value="val_no" checked> No, remote only</label>
+        </fieldset>
+
+        <!-- Checkbox group -->
+        <fieldset>
+          <legend>Which technologies do you know?</legend>
+          <label><input type="checkbox" name="tech" value="val_react" checked> React</label>
+          <label><input type="checkbox" name="tech" value="val_ts" checked> TypeScript</label>
+          <label><input type="checkbox" name="tech" value="val_python"> Python</label>
+        </fieldset>
+      </form>
+    `);
+
+    const textEl = doc.getElementById('q_years')!;
+    expect(readHumanValue(textEl, doc)).toBe('5 years');
+
+    const selectEl = doc.getElementById('q_notice')!;
+    expect(readHumanValue(selectEl, doc)).toBe('30 days');
+
+    const radioFirst = doc.querySelector('input[name="relocate"]')!;
+    expect(readHumanValue(radioFirst, doc)).toBe('No, remote only');
+
+    const checkboxFirst = doc.querySelector('input[name="tech"]')!;
+    expect(readHumanCheckboxGroupValue(checkboxFirst, doc)).toBe('React, TypeScript');
   });
 });
