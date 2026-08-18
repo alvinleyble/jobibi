@@ -17,6 +17,11 @@ export const DOCUMENT_KINDS = ['resume', 'cover_letter', 'transcript'] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
 // Adapter types are lightweight and safe for the extension bundle (no ingestion deps).
+export {
+  PICK_LIST_FIELD_TYPES,
+  PICK_LIST_MESSAGE,
+  isPickListFieldType,
+} from './adapters/types.ts';
 export type {
   ExtractedQuestion,
   ExtractionResult,
@@ -24,6 +29,7 @@ export type {
   JobContext,
   LabelSource,
   MappingConfidence,
+  PickListFieldType,
 } from './adapters/types.ts';
 export { extractJobStreetQuestions } from './adapters/jobstreet.ts';
 export {

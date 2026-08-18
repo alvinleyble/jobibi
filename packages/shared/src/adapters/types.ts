@@ -13,6 +13,18 @@ export const FIELD_TYPES = [
 ] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
+/** Pick-list field types that do not receive prose suggestions (D24). */
+export const PICK_LIST_FIELD_TYPES = ['select', 'radio', 'checkbox'] as const;
+export type PickListFieldType = (typeof PICK_LIST_FIELD_TYPES)[number];
+
+export const PICK_LIST_MESSAGE = 'Pick from the options on the page.';
+
+export function isPickListFieldType(fieldType?: string | null): boolean {
+  if (!fieldType) return false;
+  const normalized = fieldType.trim().toLowerCase();
+  return normalized === 'select' || normalized === 'radio' || normalized === 'checkbox';
+}
+
 /** Confidence that the label→field mapping is correct (D16). 0–1. */
 export type MappingConfidence = number;
 

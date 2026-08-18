@@ -81,6 +81,10 @@ _Avoid_: Duplicate, cache hit, repeat
 The handling salary and notice-period questions receive: Jobibi never stores or auto-suggests a value for either, so it always refuses and asks the user to answer directly in the moment.
 _Avoid_: Sensitive fact, always-confirm, confirmation flow
 
+**Pick-list question**:
+A question whose field type is `select`, `radio`, or `checkbox`. Decided in code before retrieval and before the gate — Jobibi never drafts prose or calls the model for it, and it never appears in gate telemetry.
+_Avoid_: Fourth outcome, selection question
+
 ### Reading the page
 
 **Adapter**:

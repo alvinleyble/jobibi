@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { AUTOFILL_CONFIDENCE_THRESHOLD, isVideoQuestion } from '@jobibi/shared';
+import { AUTOFILL_CONFIDENCE_THRESHOLD, isVideoQuestion, isPickListFieldType, PICK_LIST_MESSAGE } from '@jobibi/shared';
 import type { ExtractedQuestion, ExtractionResult } from '@jobibi/shared';
 import { humanizeErrorMessage } from './ingestError';
 
 interface SuggestState {
-  outcome?: 'draft' | 'ask' | 'refuse';
+  outcome?: 'draft' | 'ask' | 'refuse' | 'pick_list';
+  message?: string;
   answer?: string;
   skeleton?: string[];
   sources?: { kind: string; label: string; ref: string }[];
@@ -111,6 +112,7 @@ export function SuggestCard({
             role: jobContext.roleTitle ?? 'Unknown role',
             company: jobContext.company ?? 'Unknown company',
           },
+          fieldType: q.fieldType,
         },
       });
       if (error) {
@@ -120,6 +122,7 @@ export function SuggestCard({
       }
       setState({
         outcome: data.outcome,
+        message: data.message,
         answer: data.answer,
         skeleton: data.skeleton,
         sources: data.sources,
@@ -302,6 +305,17 @@ export function SuggestCard({
   };
 
   const seen = state.seenBefore;
+
+  // D24: Pick-list questions render a single instruction line with no Suggest button
+  if (isPickListFieldType(q.fieldType)) {
+    return (
+      <div className="mt-1" data-testid="picklist-card">
+        <p className="text-xs text-ink-muted leading-relaxed">
+          {PICK_LIST_MESSAGE}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-1 flex flex-col gap-2">
