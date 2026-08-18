@@ -10,10 +10,12 @@ describe('Persistent Capture Toast & Undo Logic (Items 7 & 8)', () => {
     it('does not auto-hide toast after 4000ms or 10000ms', () => {
       vi.useFakeTimers();
 
-      let toastState: { text: string; insertedIds: string[]; canUndo: boolean } | null = null;
+      const toastRef: {
+        current: { text: string; insertedIds: string[]; canUndo: boolean } | null;
+      } = { current: null };
       const showCaptureToast = (payload: { inserted?: number; insertedIds?: string[] }) => {
         const count = payload.inserted ?? 0;
-        toastState = {
+        toastRef.current = {
           text: `Saved ${count} answers to memory`,
           insertedIds: payload.insertedIds ?? [],
           canUndo: (payload.insertedIds?.length ?? 0) > 0,
@@ -21,16 +23,16 @@ describe('Persistent Capture Toast & Undo Logic (Items 7 & 8)', () => {
       };
 
       showCaptureToast({ inserted: 2, insertedIds: ['qa-1', 'qa-2'] });
-      expect(toastState).not.toBeNull();
-      expect(toastState?.text).toBe('Saved 2 answers to memory');
-      expect(toastState?.canUndo).toBe(true);
+      expect(toastRef.current).not.toBeNull();
+      expect(toastRef.current?.text).toBe('Saved 2 answers to memory');
+      expect(toastRef.current?.canUndo).toBe(true);
 
       // Advance time by 4000ms and 10000ms — toast must remain visible (no auto-dismiss timer)
       vi.advanceTimersByTime(4000);
-      expect(toastState).not.toBeNull();
+      expect(toastRef.current).not.toBeNull();
 
       vi.advanceTimersByTime(10000);
-      expect(toastState).not.toBeNull();
+      expect(toastRef.current).not.toBeNull();
 
       vi.useRealTimers();
     });
