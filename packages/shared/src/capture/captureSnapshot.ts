@@ -65,6 +65,34 @@ export function linkedInJobKeyFromUrl(url: string): string {
   }
 }
 
+/**
+ * Indeed: the job identity lives in jk= / vjk= / iaKey= / jobKey= / jobid= query params,
+ * or the /beta/indeedapply/form or /indeedapply/form path prefix for SmartApply.
+ * Step navigation on SmartApply changes the module suffix (/questions-module/...,
+ * /resume-selection-module, /review-module) while preserving the form identity.
+ */
+export function indeedJobKeyFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const jk =
+      u.searchParams.get('jk') ||
+      u.searchParams.get('vjk') ||
+      u.searchParams.get('iaKey') ||
+      u.searchParams.get('jobKey') ||
+      u.searchParams.get('jobid');
+    if (jk) return `jk:${jk}`;
+    if (u.pathname.includes('/beta/indeedapply/form') || u.pathname.includes('/indeedapply/form')) {
+      const prefix = u.pathname.match(/(\/beta)?\/indeedapply\/form/);
+      if (prefix) return prefix[0];
+    }
+    const view = u.pathname.match(/\/viewjob/);
+    if (view) return u.pathname;
+    return u.pathname;
+  } catch {
+    return url;
+  }
+}
+
 export function isSameApplication(
   snapshot: CaptureSnapshot,
   freshJobContext: JobContext,

@@ -240,3 +240,8 @@ export function getRoleRequirementsUrl(port: number): string {
 export function getLinkedInReviewUrl(port: number): string {
   return `http://www.linkedin.com:${port}/jobs/view/789/linkedin-review`;
 }
+
+export function getIndeedMultistepUrl(port: number): string {
+  return `http://smartapply.indeed.com:${port}/beta/indeedapply/form/questions-module/questions/1/indeed-multistep`;
+}
+

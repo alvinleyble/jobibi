@@ -1,6 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { startFixtureServer, type FixtureServer } from './helpers/server';
-import { launchExtensionContext, openSidepanel, seedSession, getAtsUrl, getRoleRequirementsUrl, getLinkedInReviewUrl, type TestExtensionContext } from './helpers/extension';
+import {
+  launchExtensionContext,
+  openSidepanel,
+  seedSession,
+  getAtsUrl,
+  getRoleRequirementsUrl,
+  getLinkedInReviewUrl,
+  getIndeedMultistepUrl,
+  type TestExtensionContext,
+} from './helpers/extension';
 
 test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
   let server: FixtureServer;
@@ -301,5 +310,91 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
     await expect(sidepanel.locator('text=Stored answers · 1')).toBeVisible({ timeout: 7000 });
     await expect(sidepanel.locator('text=How many years of work experience do you have with Playwright?')).toBeVisible({ timeout: 7000 });
     await expect(sidepanel.locator('text=3 years of end-to-end testing with Playwright.')).toBeVisible({ timeout: 7000 });
+  });
+
+  test('Indeed SmartApply: eager snapshot captures answers across SPA step transition (Continue -> Review step)', async () => {
+    const sidepanel = await openSidepanel(ext.context, ext.extensionId);
+    await seedSession(sidepanel, { isBetaTester: true });
+    await sidepanel.reload();
+    await sidepanel.waitForLoadState('domcontentloaded');
+
+    let captureRequestBody: any = null;
+
+    // Intercept capture Edge function
+    await ext.context.route('**/functions/v1/capture', async (route) => {
+      const postData = route.request().postDataJSON();
+      captureRequestBody = postData;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          inserted: 3,
+          droppedMismatched: 0,
+          droppedSensitive: 0,
+          sensitiveRejections: [],
+        }),
+      });
+    });
+
+    // Open the Indeed SmartApply multistep fixture
+    const atsPage = await ext.context.newPage();
+    const url = getIndeedMultistepUrl(server.port);
+    await atsPage.goto(url);
+    await atsPage.waitForLoadState('domcontentloaded');
+
+    // The sidepanel lists the questions from questions-step-1
+    await sidepanel.bringToFront();
+    await expect(sidepanel.locator('text=How many years of experience do you have with TypeScript?')).toBeVisible({
+      timeout: 7000,
+    });
+    await expect(sidepanel.locator('text=Which frontend frameworks have you used in production?')).toBeVisible();
+    await expect(sidepanel.locator('text=Are you comfortable with remote work?')).toBeVisible();
+
+    // Answer the fields on Step 1
+    await atsPage.bringToFront();
+    await atsPage.locator('#q_years').fill('5 years of professional TypeScript.');
+    await atsPage.locator('#fw-react').check();
+    await atsPage.locator('#fw-vue').check();
+    await atsPage.locator('#remote-yes').check();
+
+    // Click Continue — the SPA immediately swaps Step 1 for Review Step in place
+    await atsPage.locator('#continue-step-btn').click();
+
+    // Review step is now visible
+    await expect(atsPage.locator('#review-step')).toBeVisible({ timeout: 5000 });
+
+    // Capture payload still carries the answered step, merged from the eager snapshot
+    await sidepanel.bringToFront();
+    await expect(sidepanel.locator('text=Saved 3 answers to memory')).toBeVisible({ timeout: 7000 });
+
+    expect(captureRequestBody).not.toBeNull();
+    expect(captureRequestBody.answers).toBeInstanceOf(Array);
+    expect(captureRequestBody.answers.length).toBeGreaterThanOrEqual(3);
+
+    const tsAnswer = captureRequestBody.answers.find((a: any) =>
+      a.questionLabel.includes('years of experience do you have with TypeScript'),
+    );
+    expect(tsAnswer).toBeDefined();
+    expect(tsAnswer.answerText).toBe('5 years of professional TypeScript.');
+    expect(tsAnswer.mappingVerified).toBe(true);
+
+    const fwAnswer = captureRequestBody.answers.find((a: any) =>
+      a.questionLabel.includes('Which frontend frameworks have you used in production?'),
+    );
+    expect(fwAnswer).toBeDefined();
+    expect(fwAnswer.answerText).toBe('React, Vue.js');
+    expect(fwAnswer.mappingVerified).toBe(true);
+
+    const remoteAnswer = captureRequestBody.answers.find((a: any) =>
+      a.questionLabel.includes('Are you comfortable with remote work?'),
+    );
+    expect(remoteAnswer).toBeDefined();
+    expect(remoteAnswer.answerText).toBe('Yes, 100% remote');
+    expect(remoteAnswer.mappingVerified).toBe(true);
+
+    // Job context resolved
+    expect(captureRequestBody.application.roleTitle).toBe('Senior Frontend Engineer');
+    expect(captureRequestBody.application.company).toBe('Indeed Solutions Inc.');
   });
 });

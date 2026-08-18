@@ -75,6 +75,7 @@ export {
   resolveCapturePayload,
   defaultJobKeyFromUrl,
   linkedInJobKeyFromUrl,
+  indeedJobKeyFromUrl,
 } from './capture/captureSnapshot.ts';
 export type {
   CaptureAnswerEntry,
