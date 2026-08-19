@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { normalizeQuestion } from '@jobibi/shared';
 import { useSession } from './useSession';
 import SignIn from './SignIn';
 import { Onboarding } from './Onboarding';
@@ -14,6 +15,23 @@ import { humanizeErrorMessage } from './ingestError';
 
 export type TabType = 'suggest' | 'memory' | 'settings';
 export type SubViewType = null | 'usage' | 'account';
+
+export interface CaptureToastState {
+  text: string;
+  insertedIds: string[];
+  canUndo: boolean;
+  isUndoing?: boolean;
+  isUndone?: boolean;
+  error?: string;
+  url?: string;
+  jobContext?: {
+    role?: string;
+    roleTitle?: string;
+    company?: string;
+    url?: string;
+  };
+  capturedAt?: number;
+}
 
 function App() {
   const { session, loading, isBetaTester } = useSession();
@@ -33,15 +51,25 @@ function App() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Capture toast state across tabs
-  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
+  // Persistent capture toast state across tabs
+  const [captureToast, setCaptureToast] = useState<CaptureToastState | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const undoToastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    let toastTimer: number | null = null;
     let errorTimer: number | null = null;
 
-    const showToast = (inserted: number, dropped = 0, updated = 0) => {
+    const showCaptureToast = (payload: {
+      inserted?: number;
+      droppedMismatched?: number;
+      updated?: number;
+      insertedIds?: string[];
+      url?: string;
+      jobContext?: { role?: string; roleTitle?: string; company?: string; url?: string };
+    }) => {
+      const inserted = payload.inserted ?? 0;
+      const dropped = payload.droppedMismatched ?? 0;
+      const updated = payload.updated ?? 0;
       const total = inserted + updated;
       let msg: string;
       if (total > 0) {
@@ -50,12 +78,26 @@ function App() {
       } else if (dropped) {
         msg = `${dropped} answer${dropped === 1 ? '' : 's'} skipped (mismatched)`;
       } else {
-        // Capture ran but counts unclear — still confirm to user
         msg = 'Answers saved to memory';
       }
-      setCaptureMsg(msg);
-      if (toastTimer) clearTimeout(toastTimer);
-      toastTimer = window.setTimeout(() => setCaptureMsg(null), 4000);
+
+      const insertedIds = Array.isArray(payload.insertedIds) ? payload.insertedIds : [];
+
+      if (undoToastTimerRef.current) {
+        clearTimeout(undoToastTimerRef.current);
+        undoToastTimerRef.current = null;
+      }
+
+      setCaptureToast({
+        text: msg,
+        insertedIds,
+        canUndo: insertedIds.length > 0,
+        isUndoing: false,
+        isUndone: false,
+        url: payload.url,
+        jobContext: payload.jobContext,
+        capturedAt: Date.now(),
+      });
     };
 
     const showError = (message: string) => {
@@ -66,11 +108,48 @@ function App() {
 
     const onMsg = (message: unknown) => {
       if (typeof message === 'object' && message !== null) {
-        const m = message as { type?: string; payload?: { inserted?: number; droppedMismatched?: number; updated?: number; message?: string } };
+        const m = message as {
+          type?: string;
+          payload?: {
+            inserted?: number;
+            droppedMismatched?: number;
+            updated?: number;
+            message?: string;
+            insertedIds?: string[];
+            url?: string;
+            jobContext?: { roleTitle?: string; role?: string; company?: string; url?: string };
+          };
+        };
         if (m.type === 'JOBIBI_CAPTURE_COMPLETED' && m.payload) {
-          showToast(m.payload.inserted ?? 0, m.payload.droppedMismatched ?? 0, (m.payload as { updated?: number }).updated ?? 0);
+          showCaptureToast(m.payload);
         } else if (m.type === 'JOBIBI_CAPTURE_FAILED' && m.payload?.message) {
           showError(m.payload.message);
+        } else if (m.type === 'JOBIBI_QUESTIONS' && m.payload) {
+          // If questions change for a different job context, dismiss previous capture toast
+          const questionsPayload = m.payload;
+          setCaptureToast((curr) => {
+            if (!curr) return null;
+            if (curr.capturedAt && Date.now() - curr.capturedAt < 500) {
+              return curr;
+            }
+            if (curr.jobContext || curr.url) {
+              const newRole = questionsPayload.jobContext?.roleTitle ?? questionsPayload.jobContext?.role;
+              const oldRole = curr.jobContext?.roleTitle ?? curr.jobContext?.role;
+              const newCompany = questionsPayload.jobContext?.company;
+              const oldCompany = curr.jobContext?.company;
+              const newUrl = questionsPayload.jobContext?.url ?? questionsPayload.url;
+              const oldUrl = curr.url ?? curr.jobContext?.url;
+
+              if (
+                (oldRole && newRole && oldRole !== newRole) ||
+                (oldCompany && newCompany && oldCompany !== newCompany) ||
+                (oldUrl && newUrl && oldUrl !== newUrl)
+              ) {
+                return null;
+              }
+            }
+            return curr;
+          });
         }
       }
     };
@@ -79,9 +158,18 @@ function App() {
     const onStorageChanged = (changes: Record<string, unknown>, area: string) => {
       if (area !== 'local') return;
       if ('jobibi_last_capture' in changes) {
-        const val = (changes.jobibi_last_capture as { newValue?: { inserted?: number; updated?: number; droppedMismatched?: number } })?.newValue;
+        const val = (changes.jobibi_last_capture as {
+          newValue?: {
+            inserted?: number;
+            updated?: number;
+            droppedMismatched?: number;
+            insertedIds?: string[];
+            url?: string;
+            jobContext?: { roleTitle?: string; role?: string; company?: string; url?: string };
+          };
+        })?.newValue;
         if (val) {
-          showToast(val.inserted ?? 0, val.droppedMismatched ?? 0, val.updated ?? 0);
+          showCaptureToast(val);
         }
       }
       if ('jobibi_last_capture_error' in changes) {
@@ -93,11 +181,58 @@ function App() {
     };
     browser.storage.onChanged.addListener(onStorageChanged);
 
+    const onTabUpdated = (_tabId: number, changeInfo: { url?: string }) => {
+      if (changeInfo.url) {
+        setCaptureToast((curr) => {
+          if (!curr) return null;
+          if (curr.capturedAt && Date.now() - curr.capturedAt < 500) return curr;
+          if (curr.url && changeInfo.url !== curr.url) {
+            return null;
+          }
+          return curr;
+        });
+      }
+    };
+
+    const onTabActivated = async (activeInfo: { tabId: number }) => {
+      try {
+        const tab = await browser.tabs?.get?.(activeInfo.tabId).catch(() => null);
+        if (tab?.url) {
+          setCaptureToast((curr) => {
+            if (!curr) return null;
+            if (curr.capturedAt && Date.now() - curr.capturedAt < 500) return curr;
+            if (curr.url && tab.url !== curr.url) {
+              return null;
+            }
+            return curr;
+          });
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    if (browser.tabs?.onUpdated?.addListener) {
+      browser.tabs.onUpdated.addListener(onTabUpdated as Parameters<typeof browser.tabs.onUpdated.addListener>[0]);
+    }
+    if (browser.tabs?.onActivated?.addListener) {
+      browser.tabs.onActivated.addListener(onTabActivated);
+    }
+
     return () => {
-      if (toastTimer) clearTimeout(toastTimer);
       if (errorTimer) clearTimeout(errorTimer);
+      if (undoToastTimerRef.current) {
+        clearTimeout(undoToastTimerRef.current);
+        undoToastTimerRef.current = null;
+      }
       browser.runtime.onMessage.removeListener(onMsg as Parameters<typeof browser.runtime.onMessage.removeListener>[0]);
       browser.storage.onChanged.removeListener(onStorageChanged);
+      if (browser.tabs?.onUpdated?.removeListener) {
+        browser.tabs.onUpdated.removeListener(onTabUpdated as Parameters<typeof browser.tabs.onUpdated.removeListener>[0]);
+      }
+      if (browser.tabs?.onActivated?.removeListener) {
+        browser.tabs.onActivated.removeListener(onTabActivated);
+      }
     };
   }, []);
 
@@ -171,6 +306,150 @@ function App() {
   const handleTabSwitch = (tab: TabType) => {
     setActiveTab(tab);
     setActiveView(null);
+  };
+
+  const handleUndoCapture = async () => {
+    if (!captureToast || !captureToast.insertedIds || captureToast.insertedIds.length === 0 || captureToast.isUndoing) {
+      return;
+    }
+
+    const idsToUndo = [...captureToast.insertedIds];
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    setCaptureToast((prev) => (prev ? { ...prev, isUndoing: true, error: undefined } : null));
+
+    try {
+      // 1. Fetch all of the user's qa_pairs so we can tell which memory_chunks are
+      // uniquely owned by this capture vs. shared with a still-valid duplicate answer
+      const { data: allQaRows, error: fetchError } = await supabase
+        .from('qa_pairs')
+        .select('id, question_label, answer_text')
+        .eq('user_id', userId);
+
+      if (fetchError) {
+        throw fetchError;
+      }
+
+      const idsToUndoSet = new Set(idsToUndo);
+      const qaRows = (allQaRows ?? []).filter((qa) => idsToUndoSet.has(qa.id));
+      const remainingRows = (allQaRows ?? []).filter((qa) => !idsToUndoSet.has(qa.id));
+
+      if (qaRows.length > 0) {
+        const remainingTexts = new Set(
+          remainingRows.map((qa) => `Q: ${qa.question_label}\nA: ${qa.answer_text}`),
+        );
+        const remainingNorms = new Set(remainingRows.map((qa) => normalizeQuestion(qa.question_label)));
+
+        const itemTexts = new Set<string>();
+        const itemNorms = new Set<string>();
+        for (const qa of qaRows) {
+          const text = `Q: ${qa.question_label}\nA: ${qa.answer_text}`;
+          const norm = normalizeQuestion(qa.question_label);
+          if (!remainingTexts.has(text)) itemTexts.add(text);
+          if (!remainingNorms.has(norm)) itemNorms.add(norm);
+        }
+
+        if (itemTexts.size > 0 || itemNorms.size > 0) {
+          const { data: chunkRows, error: chunkFetchError } = await supabase
+            .from('memory_chunks')
+            .select('id, text')
+            .eq('user_id', userId)
+            .eq('type', 'qa_pair');
+
+          if (chunkFetchError) {
+            throw chunkFetchError;
+          }
+
+          const chunkIdsToDelete: string[] = [];
+          if (chunkRows) {
+            for (const ch of chunkRows as Array<{ id: string; text: string }>) {
+              const qPart = ch.text.startsWith('Q: ')
+                ? (ch.text.split('\nA:')[0]?.slice(2).trim() ?? ch.text)
+                : ch.text;
+              if (itemTexts.has(ch.text) || itemNorms.has(normalizeQuestion(qPart))) {
+                chunkIdsToDelete.push(ch.id);
+              }
+            }
+          }
+          if (chunkIdsToDelete.length > 0) {
+            const { error: chunkDeleteError } = await supabase
+              .from('memory_chunks')
+              .delete()
+              .in('id', chunkIdsToDelete)
+              .eq('user_id', userId);
+
+            if (chunkDeleteError) {
+              throw chunkDeleteError;
+            }
+          }
+        }
+      }
+
+      // 2. Delete qa_pairs
+      const { error: deleteError } = await supabase
+        .from('qa_pairs')
+        .delete()
+        .in('id', idsToUndo)
+        .eq('user_id', userId);
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      // 3. Update storage and broadcast undo event
+      await browser.storage.local.set({
+        jobibi_last_capture_undone: {
+          at: Date.now(),
+          insertedIds: idsToUndo,
+        },
+      });
+
+      await browser.runtime
+        .sendMessage({
+          type: 'JOBIBI_CAPTURE_UNDONE',
+          payload: { insertedIds: idsToUndo },
+        })
+        .catch(() => {});
+
+      // 4. Update toast state to confirm undone
+      setCaptureToast({
+        text: 'Capture undone',
+        insertedIds: [],
+        canUndo: false,
+        isUndoing: false,
+        isUndone: true,
+      });
+
+      // Automatically dismiss the 'Capture undone' toast after 5 seconds
+      if (undoToastTimerRef.current) {
+        clearTimeout(undoToastTimerRef.current);
+      }
+      undoToastTimerRef.current = window.setTimeout(() => {
+        setCaptureToast((current) => (current?.isUndone ? null : current));
+        undoToastTimerRef.current = null;
+      }, 5000);
+    } catch (err) {
+      console.error('[App] Failed to undo capture:', err);
+      const msg = humanizeErrorMessage(err instanceof Error ? err.message : String(err));
+      setCaptureToast((prev) =>
+        prev
+          ? {
+              ...prev,
+              isUndoing: false,
+              error: `Failed to undo: ${msg}`,
+            }
+          : null,
+      );
+    }
+  };
+
+  const handleDismissToast = () => {
+    if (undoToastTimerRef.current) {
+      clearTimeout(undoToastTimerRef.current);
+      undoToastTimerRef.current = null;
+    }
+    setCaptureToast(null);
   };
 
   const handleExportData = async () => {
@@ -407,12 +686,40 @@ function App() {
       {/* Main Scrollable Content Area */}
       <main className="flex-1 overflow-y-auto px-4 pb-5">
         {/* Capture Toast Banner */}
-        {captureMsg ? (
+        {captureToast ? (
           <div
             data-testid="capture-toast"
-            className="mb-3 rounded-lg border border-success-tint-border bg-success-tint px-3 py-2 text-xs font-medium text-success"
+            className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-success-tint-border bg-success-tint px-3 py-2 text-xs font-medium text-success"
           >
-            {captureMsg}
+            <div className="flex-1 min-w-0 truncate">
+              {captureToast.error ? (
+                <span className="text-danger">{captureToast.error}</span>
+              ) : (
+                <span>{captureToast.text}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {captureToast.canUndo && !captureToast.isUndone ? (
+                <button
+                  type="button"
+                  onClick={handleUndoCapture}
+                  disabled={captureToast.isUndoing}
+                  data-testid="capture-undo-btn"
+                  className="rounded px-1.5 py-0.5 text-xs font-bold text-success hover:underline hover:bg-success-tint-border/30 disabled:opacity-50 cursor-pointer border-none bg-transparent"
+                >
+                  {captureToast.isUndoing ? 'Undoing…' : 'Undo'}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={handleDismissToast}
+                data-testid="capture-dismiss-btn"
+                aria-label="Dismiss capture notification"
+                className="flex h-5 w-5 items-center justify-center rounded text-xs font-bold text-success/70 hover:text-success hover:bg-success-tint-border/30 cursor-pointer border-none bg-transparent"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         ) : null}
         {captureError ? (

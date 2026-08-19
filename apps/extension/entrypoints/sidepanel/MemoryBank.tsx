@@ -77,7 +77,7 @@ export function MemoryBank({ userId }: MemoryBankProps) {
     const onMsg = (m: unknown) => {
       if (typeof m === 'object' && m !== null) {
         const msg = m as { type?: string };
-        if (msg.type === 'JOBIBI_CAPTURE_COMPLETED') {
+        if (msg.type === 'JOBIBI_CAPTURE_COMPLETED' || msg.type === 'JOBIBI_CAPTURE_UNDONE') {
           triggerRefresh();
         }
       }
@@ -85,7 +85,7 @@ export function MemoryBank({ userId }: MemoryBankProps) {
     browser.runtime.onMessage.addListener(onMsg as Parameters<typeof browser.runtime.onMessage.addListener>[0]);
 
     const onStore = (changes: Record<string, unknown>, area: string) => {
-      if (area === 'local' && 'jobibi_last_capture' in changes) {
+      if (area === 'local' && ('jobibi_last_capture' in changes || 'jobibi_last_capture_undone' in changes)) {
         triggerRefresh();
       }
     };
