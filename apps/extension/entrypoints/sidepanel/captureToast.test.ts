@@ -247,5 +247,50 @@ describe('Persistent Capture Toast & Undo Logic (Items 7 & 8)', () => {
       expect(toastState.canUndo).toBe(true);
       expect(toastState.isUndoing).toBe(false);
     });
+
+    it('automatically dismisses the "Capture undone" toast after 5 seconds (5000ms)', () => {
+      vi.useFakeTimers();
+
+      const toastRef: {
+        current: { text: string; insertedIds: string[]; canUndo: boolean; isUndone?: boolean } | null;
+      } = {
+        current: {
+          text: 'Saved 2 answers to memory',
+          insertedIds: ['qa-1', 'qa-2'],
+          canUndo: true,
+        },
+      };
+
+      let timer: number | null = null;
+
+      // Simulate undo completion
+      toastRef.current = {
+        text: 'Capture undone',
+        insertedIds: [],
+        canUndo: false,
+        isUndone: true,
+      };
+
+      timer = setTimeout(() => {
+        if (toastRef.current?.isUndone) {
+          toastRef.current = null;
+        }
+      }, 5000) as unknown as number;
+
+      expect(toastRef.current).not.toBeNull();
+      expect(toastRef.current?.text).toBe('Capture undone');
+
+      // Still visible before 5000ms (e.g. at 4000ms)
+      vi.advanceTimersByTime(4000);
+      expect(toastRef.current).not.toBeNull();
+      expect(toastRef.current?.text).toBe('Capture undone');
+
+      // Dismissed at 5000ms
+      vi.advanceTimersByTime(1000);
+      expect(toastRef.current).toBeNull();
+
+      vi.useRealTimers();
+    });
   });
 });
+

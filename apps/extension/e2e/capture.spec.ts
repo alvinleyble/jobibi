@@ -501,9 +501,8 @@ test.describe('Capture Flow (D12, D13, D16 & D17)', () => {
     await expect(sidepanel.locator('text=Stored answers · 0')).toBeVisible({ timeout: 5000 });
     expect(deleteQaCalled).toBe(true);
 
-    // 4. Click dismiss '✕' button
-    await sidepanel.getByTestId('capture-dismiss-btn').click();
-    await expect(toast).toHaveCount(0);
+    // 4. Verify the 'Capture undone' toast automatically dismisses after 5 seconds
+    await expect(toast).toHaveCount(0, { timeout: 7000 });
   });
 });
 

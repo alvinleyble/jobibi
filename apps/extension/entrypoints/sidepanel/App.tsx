@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { normalizeQuestion } from '@jobibi/shared';
 import { useSession } from './useSession';
 import SignIn from './SignIn';
@@ -54,6 +54,7 @@ function App() {
   // Persistent capture toast state across tabs
   const [captureToast, setCaptureToast] = useState<CaptureToastState | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const undoToastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let errorTimer: number | null = null;
@@ -81,6 +82,11 @@ function App() {
       }
 
       const insertedIds = Array.isArray(payload.insertedIds) ? payload.insertedIds : [];
+
+      if (undoToastTimerRef.current) {
+        clearTimeout(undoToastTimerRef.current);
+        undoToastTimerRef.current = null;
+      }
 
       setCaptureToast({
         text: msg,
@@ -215,6 +221,10 @@ function App() {
 
     return () => {
       if (errorTimer) clearTimeout(errorTimer);
+      if (undoToastTimerRef.current) {
+        clearTimeout(undoToastTimerRef.current);
+        undoToastTimerRef.current = null;
+      }
       browser.runtime.onMessage.removeListener(onMsg as Parameters<typeof browser.runtime.onMessage.removeListener>[0]);
       browser.storage.onChanged.removeListener(onStorageChanged);
       if (browser.tabs?.onUpdated?.removeListener) {
@@ -410,6 +420,15 @@ function App() {
         isUndoing: false,
         isUndone: true,
       });
+
+      // Automatically dismiss the 'Capture undone' toast after 5 seconds
+      if (undoToastTimerRef.current) {
+        clearTimeout(undoToastTimerRef.current);
+      }
+      undoToastTimerRef.current = window.setTimeout(() => {
+        setCaptureToast((current) => (current?.isUndone ? null : current));
+        undoToastTimerRef.current = null;
+      }, 5000);
     } catch (err) {
       console.error('[App] Failed to undo capture:', err);
       const msg = humanizeErrorMessage(err instanceof Error ? err.message : String(err));
@@ -423,6 +442,14 @@ function App() {
           : null,
       );
     }
+  };
+
+  const handleDismissToast = () => {
+    if (undoToastTimerRef.current) {
+      clearTimeout(undoToastTimerRef.current);
+      undoToastTimerRef.current = null;
+    }
+    setCaptureToast(null);
   };
 
   const handleExportData = async () => {
@@ -685,7 +712,7 @@ function App() {
               ) : null}
               <button
                 type="button"
-                onClick={() => setCaptureToast(null)}
+                onClick={handleDismissToast}
                 data-testid="capture-dismiss-btn"
                 aria-label="Dismiss capture notification"
                 className="flex h-5 w-5 items-center justify-center rounded text-xs font-bold text-success/70 hover:text-success hover:bg-success-tint-border/30 cursor-pointer border-none bg-transparent"
