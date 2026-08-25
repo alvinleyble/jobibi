@@ -1,112 +1,131 @@
 # Jobibi — Architecture
 
-*Drafted 2026-08-09. Revised 2026-08-09 to record the outcomes of the design grill. See [DECISIONS.md](DECISIONS.md) for the decision log and [CONTEXT.md](../CONTEXT.md) for shared vocabulary.*
+*Drafted 2026-08-09. Revised 2026-08-25 to record the pivot to 100% open-source local BYO-Key (D26). See [DECISIONS.md](DECISIONS.md) for the decision log and [CONTEXT.md](../CONTEXT.md) for shared vocabulary.*
 
 ## Shape of the system
 
-Jobibi operates across two distinct user postures (D21) through a unified client architecture with decoupled **`StorageAdapter`** and **`AIAdapter`** abstractions:
+Jobibi is a 100% open-source, local-first Chrome extension with zero cloud infrastructure (D26).
+All persistence, vector retrieval, and pipeline orchestration execute locally within the browser.
+AI drafting calls connect directly from the client to the user's chosen provider using their own API key.
 
 ```mermaid
 flowchart TD
     subgraph Browser["Chrome Extension (Client Side)"]
-        UI["Side Panel & Content Scripts<br/>SuggestCards · MemoryBank · AutoFill"]
-        SA["StorageAdapter<br/>(Interface)"]
-        AI["AIAdapter<br/>(Interface)"]
-        
-        PGL["PGliteStorageAdapter<br/>In-Process Postgres WASM<br/>IndexedDB / OPFS (Local)"]
-        SUPA_S["SupabaseStorageAdapter<br/>Remote Cloud Client"]
-        
-        BYO["ClientAIAdapter<br/>Direct HTTPS: OpenAI / Gemini / Claude"]
-        PRX["JobibiProxyAIAdapter<br/>Calls Hosted Edge Function"]
-    end
-    
-    subgraph Cloud["Supabase Cloud & Hosted Proxy (Cloud Posture Only)"]
-        AUTH["Supabase Auth (OTP/PKCE)"]
-        DB["Cloud Postgres + pgvector"]
-        EF["Edge Functions (Hosted Proxy)"]
-    end
-    
-    subgraph Providers["External AI Providers"]
-        OAI["OpenAI API"]
-        GEM["Google Gemini API"]
-        ANT["Anthropic Claude API"]
+        subgraph UI_Layer["UI & Extraction Layer"]
+            UI["Side Panel<br/>SuggestCards · MemoryBank · Settings"]
+            CS["Content Scripts<br/>JobStreet · LinkedIn · Indeed · Generic"]
+        end
+
+        subgraph Background_Layer["Routing Layer"]
+            SW["Background Service Worker<br/>Thin Router · SidePanel Launcher · Message Bus"]
+        end
+
+        subgraph Offscreen_Layer["Compute & Storage Host (Offscreen Document)"]
+            RPC["Message Router & Pipeline Orchestrator"]
+            PGL["PGliteStorageAdapter<br/>Postgres WASM + pgvector<br/>IndexedDB: idb://jobibi-local-memory"]
+            ONNX["In-Browser Embeddings<br/>@xenova/transformers (gte-small ONNX)"]
+            
+            subgraph AI_Adapters["AI Provider Adapters (BYO-Key)"]
+                GEM_A["GeminiClientAdapter<br/>gemini-2.5-flash"]
+                OAI_A["OpenAIClientAdapter<br/>gpt-4o-mini"]
+            end
+        end
     end
 
-    UI --> SA
-    UI --> AI
-    
-    SA -.->|Local Posture| PGL
-    SA -.->|Cloud Posture| SUPA_S
-    
-    AI -.->|Local Posture (BYO-Key)| BYO
-    AI -.->|Cloud Posture| PRX
-    
-    SUPA_S --> DB
-    PRX --> EF --> OAI
-    
-    BYO --> OAI
-    BYO --> GEM
-    BYO --> ANT
+    subgraph Providers["External AI Provider Endpoints"]
+        GEM["Google Gemini API<br/>generativelanguage.googleapis.com"]
+        OAI["OpenAI API<br/>api.openai.com"]
+    end
+
+    UI <-->|browser.runtime.sendMessage| SW
+    CS <-->|browser.runtime.sendMessage| SW
+    SW <-->|browser.runtime.sendMessage| RPC
+
+    RPC <--> PGL
+    RPC <--> ONNX
+    RPC <--> GEM_A
+    RPC <--> OAI_A
+
+    GEM_A -->|Direct HTTPS (User Key)| GEM
+    OAI_A -->|Direct HTTPS (User Key)| OAI
 ```
 
-- **Local BYO-Key Posture (Posture A):** Memory bank, resumes, and vector embeddings live 100% on-device inside PGlite WASM. The extension makes direct HTTPS calls to the user's chosen model provider (OpenAI, Gemini, Claude) with zero intermediary storage.
-- **Cloud SaaS Posture (Posture B):** Turnkey operation where memory syncs across devices via Supabase Postgres, and AI calls are routed through Jobibi's hosted Edge proxy.
+- **Local storage engine:** Memory bank, documents, vector embeddings, Q&A history, style profiles, and telemetry reside exclusively on-device in PGlite WASM backed by IndexedDB (`idb://jobibi-local-memory`).
+- **Offscreen compute host:** PGlite WASM, ONNX vector embedding generation (`gte-small`), and AI provider HTTP requests run inside a dedicated Chrome offscreen document, isolated from service worker termination limits.
+- **Direct client AI calls:** Drafting and gap-question requests flow directly from the offscreen host to Google Gemini or OpenAI with zero intermediary servers.
 
-### Local-First Runtime Guardrails (D22)
+### Local-First Runtime Guardrails (D22, D26)
 
-1. **Centralized PGlite Host in Background Context:** PGlite WASM is instantiated exclusively in the background worker/offscreen context. Side panel and content scripts communicate via extension message passing (`browser.runtime.sendMessage`), eliminating IndexedDB multi-context lock contention.
-2. **Storage Eviction Defense:** Calls `navigator.storage.persist()` on local initialization to prevent Chromium from evicting local memory during low-disk states.
-3. **On-Demand Embedding Ingestion:** Quantized `gte-small` ONNX model (~30MB) is downloaded on-demand and cached in browser CacheStorage/IndexedDB upon first selecting Local Mode.
-4. **Transparent Token Usage:** Automatic style profile distillation (D19) surfaces a non-blocking indicator in the Memory Tab when consuming user API tokens.
-5. **Strict Telemetry Air-Gap:** All `gate_decisions`, `extraction_failures`, and `capture_mismatches` are stored in local PGlite tables only; outbound telemetry to Supabase is hard-disabled in Local Mode.
-6. **Isolated Posture Silos:** Cloud and Local are distinct databases; switching posture offers an optional 1-click cloud memory copy to local.
+1. **Centralized PGlite host in offscreen context:** PGlite WASM is instantiated exclusively within the offscreen document.
+   The side panel UI and content scripts interact with the database via typed message passing (`browser.runtime.sendMessage`), eliminating IndexedDB multi-context lock contention.
+2. **Storage persistence guarantee:** The extension calls `navigator.storage.persist()` on database initialization to protect IndexedDB from Chromium storage eviction during low-disk states.
+3. **Background embedding model delivery:** The quantized `gte-small` ONNX vector embedding model (~30MB) is downloaded in the background upon extension installation and cached permanently in browser CacheStorage and IndexedDB.
+   Onboarding is displayed immediately without blocking on model download.
+4. **Transparent token usage:** Automatic style profile distillation (D19) runs after every 10 qualifying user answers, executing directly via the configured AI provider.
+5. **Zero-outbound telemetry boundary:** All `gate_decisions`, `extraction_failures`, and `capture_mismatches` are stored strictly in local PGlite tables.
+   All remote analytics and cloud logging are eliminated.
+6. **Local data identity:** A synthetic UUID is generated on first launch and stored in `chrome.storage.local` as `jobibi_local_user_id`.
+   Schema tables retain their `user_id` column for export and import portability.
 
 ## Why this stack
 
-- **Chrome extension (Manifest V3)** — the only platform that can both *read* application forms reliably (direct DOM access, no OCR) and *write* into them (the premium Auto-Fill feature). A screen-watching desktop app could do neither well. Edge runs Chrome extensions unmodified, so Edge support is free.
-- **WXT + React + TypeScript + Tailwind** — WXT is the actively maintained modern extension framework (Vite-based, hot reload, MV3-native). React drives the side panel; content scripts stay lean and framework-free.
-- **Chrome Side Panel API** for the Sidekick — a docked panel that doesn't fight the job site's own CSS, with clean copy-paste ergonomics.
-- **Supabase** — auth, Postgres, file storage, and server code in one vendor with a generous free tier; we already operate Supabase in production elsewhere, so the tooling is familiar. Singapore region (`ap-southeast-1`) for PH latency.
-- **Postgres + pgvector** — the memory bank with meaning-based search: finds the right story from the user's history even when the question is worded differently. Hybrid retrieval (vector similarity + keyword full-text) because personal corpora are small and keyword anchors help.
-- **Row-Level Security (RLS)** — per-user isolation enforced by the database on every table. The privacy claim is structural, not behavioral.
-- **OpenAI GPT-5.6 Luna** for everything the model does: drafting, wording gap questions, and classification where rules don't suffice. One vendor, one SDK, one bill. Chosen for price ($0.20/$1.20 per MTok after the 30 July cut), best-in-class strict JSON schema output, ephemeral prompt caching that costs nothing while idle, and a half-price batch tier reserved for the style-profile job once a poller lands (direct completion for now, D19). The accepted trade is that its writing voice is the least-measured of the candidates considered — see DECISIONS D5b and the risk list below.
-- **Embeddings: gte-small, in-process** inside Edge Functions. Free, no network hop, and the memory bank is never sent anywhere to be embedded — only retrieved snippets leave at draft time. Its 384 dimensions are weaker than a dedicated embedding API, but on a cold-start corpus of 20–100 chunks that gap barely shows, and gate calibration dominates behaviour anyway. `memory_chunks` stores source text, so upgrading later is a batch re-embed per user rather than data loss.
-- **Monorepo (pnpm):** `apps/extension` (WXT), `supabase/` (functions + migrations), `packages/shared` (types + zod schemas shared end-to-end).
+- **Chrome extension (Manifest V3):** The only platform that can both read application forms reliably via direct DOM access and write into them via Auto-Fill without screen OCR or companion apps.
+  Edge runs Chrome extensions unmodified.
+- **WXT + React + TypeScript + Tailwind:** WXT provides Vite-based modern extension tooling, hot module replacement, and clean MV3 entrypoint bundling.
+  React drives the side panel UI; content scripts remain lightweight and dependency-free.
+- **Chrome Side Panel API for the Sidekick:** A docked browser panel that operates alongside web content without conflicting with site styles, providing clean ergonomics for reviewing suggestions.
+- **PGlite (`@electric-sql/pglite` + `@electric-sql/pglite-pgvector`):** In-process Postgres compiled to WASM running in the browser.
+  It preserves the exact Postgres schema, SQL syntax, pgvector indexing, and 0.7/0.3 hybrid search without maintaining backend database infrastructure.
+- **Chrome Offscreen Document:** Provides a stable, long-lived DOM context that hosts PGlite WASM, ONNX embeddings, and provider HTTP fetch calls.
+  It avoids the 30-second termination limit of Manifest V3 service workers, preventing interrupted WASM initialization and aborted AI requests.
+- **ONNX embeddings via `@xenova/transformers` (`gte-small`):** Runs 384-dimensional vector embedding generation client-side in WebAssembly/WebGPU.
+  Documents and questions are embedded in-process with zero network latency, zero per-embedding cost, and zero data leakage.
+- **Direct client AI adapters (`gemini-2.5-flash` & `gpt-4o-mini`):** Direct HTTPS communication with established AI providers using the user's personal API key.
+  Both models support strict JSON schema output, fast response times, and minimal cost (including Gemini's free tier).
+- **Monorepo (pnpm):** `apps/extension` (WXT extension) and `packages/shared` (pipeline logic, storage adapters, AI adapters, gate heuristics, and zod schemas).
 
 ## The suggestion pipeline
 
 What happens when the user opens an application page:
 
-1. **Extract** — the content script reads the form: question/label text, field type, surrounding context. It records a **mapping** from each question to its input field, with a confidence score. Per-site adapters for JobStreet, LinkedIn Easy Apply, and Indeed; a generic label-proximity heuristic for everything else.
+1. **Extract:** The content script reads the active form (question labels, field types, context markers).
+   It records a mapping from each question to its input field with a confidence score.
+   Dedicated adapters handle JobStreet, LinkedIn Easy Apply, and Indeed; a generic label-proximity heuristic handles all other pages.
 
-2. **Establish job context** — role title and company, which is what separates a QA framing from an automation framing. Full job-description text is taken opportunistically when it happens to be in the DOM (LinkedIn Easy Apply keeps the listing behind its modal), but is never required: there are no listing-page adapters and no extra host permissions. JD-keyword targeting is a later upgrade, not a v1 dependency.
+2. **Establish job context:** Role title and company are extracted to differentiate role requirements (e.g. QA testing versus automation engineering).
+   Job description text is captured opportunistically when present in the DOM without requiring dedicated listing-page adapters.
 
-3. **Normalize** — each question is cleaned and canonicalized so "Why do you want this role?" matches its thousand phrasings. (Rules first; model assist where rules fail.)
+3. **Normalize:** Each question is cleaned and canonicalized so variant phrasings match existing records.
 
-4. **Seen-before check** — search `qa_pairs` for a near-duplicate question the user already answered. A match always surfaces, but role-match decides the presentation: same role family shows the previous answer copy-ready with a quieter "rewrite for this role"; a different role family leads with a freshly re-told draft and offers "show me what I said last time". Both options are always present, so a wrong guess costs one click.
+4. **Seen-before check:** The pipeline queries local `qa_pairs` in PGlite for near-duplicate questions previously answered by the user.
+   Matches surface prior answers with options to reuse or rewrite based on role match.
 
-5. **Retrieve** — hybrid search over `memory_chunks` for the top-k relevant pieces of history.
+5. **Retrieve:** Hybrid search in PGlite combines vector cosine similarity (`gte-small` ONNX embeddings) with keyword overlap (0.7 / 0.3 weighting) across `memory_chunks` to locate relevant background.
 
-6. **Salary/notice check** — runs *before* retrieval, the gate, or any Luna call. A keyword match on the normalized question for salary or notice-period returns a static refusal: no stored answer is auto-suggested, and the user answers directly in the moment, every time, at any tier.
+6. **Salary/notice check:** Executes in code before retrieval, the gate, or any AI provider call.
+   Keyword matches on salary or notice period return a static refusal: no stored answer is suggested, and the user answers directly in the form.
 
-7. **The gate** — deterministic code scores two axes and picks one of three outcomes:
+7. **The gate:** Deterministic code evaluates question-match and role-match against relative thresholds to pick one of three outcomes:
 
    | | role-match low | role-match high |
    |---|---|---|
    | **question-match high** | **ASK** | **DRAFT** |
    | **question-match low** | REFUSE | REFUSE |
 
-   Scoring is **relative, not absolute**: the signal is how far the top match stands above that user's own score distribution, never a fixed cosine value. Absolute thresholds mean different things for a 5-chunk user and a 200-chunk user, and gte-small's 384 dimensions make raw values noisier still. A single absolute floor sits underneath, used only to catch the genuinely-nothing case that must refuse.
+   Scoring is relative to the user's historical score distribution with an absolute floor for empty memory states.
+   The AI model never decides whether to refuse.
+   On a refusal, no model call occurs.
+   On an ask, the model is called only to word the gap question after code selects the outcome.
+   Every gate decision is logged to local PGlite tables for calibration.
 
-   **The model is not consulted about this decision.** On a refusal it is never called at all. On an ask it is called only to *word* the gap question, after code has already decided to ask.
+8. **Ask (if selected):** The panel displays a single question anchored to an existing memory chunk.
+   The user's response is stored in `gap_answers`, embedded into `memory_chunks`, and passed forward to drafting.
 
-   Every decision is logged — both scores, the outcome, and what the user did next — because the cutoffs can only be properly calibrated against real usage.
+9. **Draft:** The offscreen document dispatches a request via the configured `AIAdapter` (Gemini or OpenAI).
+   The prompt combines the local style profile, retrieved memory snippets, the question, and job context.
+   All drafting calls enforce an explicit length cap and strict JSON schema output.
 
-8. **Ask, if that's the outcome** — the panel puts one short question to the user, anchored to a fact already in their history so it takes seconds to answer rather than requiring an essay. The answer is stored, chunked into memory, and the pipeline continues to drafting.
-
-9. **Draft** — Luna writes the answer from: the style profile (cached system prompt) + retrieved snippets + the question + job context. Grounding rule in the prompt *and* enforced by the gate above it. Output length is explicitly constrained — see the verbosity note under Cost model.
-
-10. **Render** — the model returns structured JSON against a strict schema, and the UI renders a copy card:
+10. **Render:** The model returns structured JSON, rendered in the side panel as a copy card:
 
 ```json
 {
@@ -123,85 +142,99 @@ What happens when the user opens an application page:
 }
 ```
 
-The card offers the finished answer and the skeleton side by side. Copy the prose, or copy the bullets and write it yourself — which also produces the highest-quality voice material the product ever sees.
-
-Free tier: Copy. Premium: Copy + Insert (fills the field; user still reviews and submits).
+The user can copy the finished prose, copy the bullet skeleton to write their own text, or click Insert to auto-fill the form field.
 
 ## Data model
 
+The local PGlite database manages the following tables:
+
 | Table | Holds | Key columns |
 |---|---|---|
-| `profiles` | The user | auth id, display name, locale, tier, is_beta_tester (client self-update blocked by trigger) |
-| `documents` | Uploads, pasted cover letters/resumes (incl. onboarding voice seeding), and accepted Draft Cover Letter output | file ref (nullable — null for pasted text), kind (resume/cover/transcript), extracted text, parsed_at, origin (nullable — set for accepted cover-letter drafts and pasted `user_written` text) |
-| `memory_chunks` | Searchable pieces of history | text, embedding, source ref, type (experience/skill/story/preference/gap_answer/qa_pair), freshness_at |
-| `applications` | Each application the user works | company, role, site, url hash, status, submitted_at |
-| `qa_pairs` | Every question the user answered | question_norm, embedding, answer_text, application_id, **draft_text**, **origin**, **edit_distance** — **the growth loop** |
-| `gap_answers` | Answers to questions *Jobibi* asked | question_asked, answer_text, anchored_chunk_id, application_id, created_at |
-| `style_profile` | Distilled voice guide | profile_md, generated_at, corpus_size |
-| `gate_decisions` | Calibration telemetry | application_id, question_norm, question_match, role_match, outcome, user_action, created_at |
-| `capture_mismatches` | D16 re-derive-drop audit log | application_id, question_label, original_mapping, rederived_mapping, reason, created_at |
-| `extraction_failures` | Adapter extraction telemetry | adapter, host, url, url_hash, detected_fields, extracted_questions, failure_reason, created_at |
+| `documents` | Resumes, cover letters, and pasted voice samples | user_id, kind (resume/cover/transcript), extracted_text, parsed_at, origin |
+| `memory_chunks` | Searchable semantic chunks | user_id, text, embedding (vector 384), source ref, type, freshness_at |
+| `applications` | Tracked job applications | user_id, company, role, site, url_hash, status, submitted_at |
+| `qa_pairs` | Stored question-and-answer pairs | user_id, question_norm, embedding, answer_text, application_id, **draft_text**, **origin**, **edit_distance** |
+| `gap_answers` | Responses to Jobibi-initiated gap questions | user_id, question_asked, answer_text, anchored_chunk_id, application_id, created_at |
+| `style_profile` | Distilled writing voice observations | user_id, profile_md, generated_at, corpus_size, rebuilding |
+| `gate_decisions` | Local gate calibration telemetry | user_id, application_id, question_norm, question_match, role_match, outcome, user_action, created_at |
+| `capture_mismatches` | Audit log for dropped field mappings (D16) | user_id, application_id, question_label, original_mapping, rederived_mapping, reason, created_at |
+| `extraction_failures` | Telemetry for adapter DOM extraction issues | user_id, adapter, host, url, url_hash, detected_fields, extracted_questions, failure_reason, created_at |
 
-`origin` on `qa_pairs` is one of `user_written`, `user_edited`, `accepted_verbatim`. It is derived by comparing `draft_text` against what the user actually submitted, and it is what keeps the voice corpus clean (see below). `documents.origin` carries the same three values for accepted Draft Cover Letter output (S8) and for pasted text the user typed themselves (e.g. onboarding voice seeding, `user_written`), and is NULL for uploaded files.
-
-`gap_answers` is deliberately separate from `qa_pairs`: it is an answer to Jobibi's question, not an employer's, and keeping the question text lets Jobibi avoid asking the same thing twice. Its content is also chunked into `memory_chunks` so it is retrievable like any other history.
-
-All tables RLS-scoped to the owning user. Export = one endpoint that bundles everything; delete = cascade wipe; and individual `qa_pairs` rows are deletable on their own, because Jobibi captures answers to questions it had no hand in.
+- `user_id` across all tables is populated with the synthetic local user ID (`jobibi_local_user_id` in `chrome.storage.local`).
+- `documents.storage_path` is unused in local mode; raw binary files are discarded after client-side parsing into `documents.extracted_text`.
+- User preferences (`output_length`, provider, API key) are stored in `chrome.storage.local`.
+- No `profiles` table is used.
+- Local data export produces a unified JSON dump; deletion drops the local IndexedDB database entirely.
+- Individual `qa_pairs` rows can be deleted independently from the Memory Bank UI.
 
 ## Capture — how the memory bank actually grows
 
-The growth loop only works if Jobibi sees what the user *submitted*, not what it *offered*. Relying on a manual "I'm done" click would mean most sessions never learn anything, and "attuned after 15–20 applications" would never arrive.
+The memory bank grows when Jobibi captures what the user *submitted*, not what was initially offered.
+Relying on manual save actions results in lost learning opportunities.
 
-So the content script keeps watching the fields it already mapped and reads their final values when the submit button is clicked or the page navigates away. This captures the user's real edits, which is the only way `origin` and `edit_distance` can be computed — and edit distance is a free per-answer quality signal that needs no callbacks and no extra clicks.
+The content script watches mapped form fields and reads their final values upon submit button click or page navigation.
+Captured answers are diffed against the initial draft to compute `origin` (`user_written`, `user_edited`, or `accepted_verbatim`) and `edit_distance`.
 
-**Scope of what is read:** every field the adapter identified as an application question, including ones Jobibi didn't help with. This is deliberate. If capture were limited to fields Jobibi drafted, every refusal would be a permanent dead end — the same question refused forever, with the user's own good answer discarded. Those self-written answers are also the purest voice material in the product. Fields never identified as questions (IDs, addresses, uploads) are never read.
+**Scope of what is read:** Every field identified as an application question is read at submission, including questions Jobibi refused or did not draft.
+This ensures user-written answers fill knowledge gaps for future applications.
+Fields not identified as questions (passwords, addresses, file uploads) are never read.
 
-**Guard against silent corruption.** A broken adapter that mis-binds question #3's label to question #7's textarea produces a panel that looks entirely correct while writing the wrong answer against the wrong question — corrupting memory permanently and invisibly. So the mapping is **independently re-derived at capture time** and compared against the mapping used when the suggestion was made. Agreement writes; disagreement drops the write and logs it. Extraction failures are cheap and self-announcing; mis-mapping is expensive and self-concealing, and the design pushes failure toward the cheap kind. The same confidence signal gates Auto-Fill, which degrades to read-only rather than typing into a field it isn't sure about.
+**Guard against silent corruption (D16):** The question-to-field mapping is independently re-derived at submission time and compared against the initial suggestion mapping.
+If mappings agree, the captured answer is written to PGlite.
+If mappings disagree, the write is dropped and logged to `capture_mismatches`.
+Auto-Fill uses the same confidence check, disabling direct insertion when mapping confidence is below 0.75.
 
 ## Memory growth and the style profile
 
-- On submit, captured answers land in `qa_pairs` with their `origin`, and new facts/stories are chunked into `memory_chunks` — unless the question is a near-duplicate (hybrid similarity ≥0.90) of an existing `qa_pairs`/`memory_chunks` entry, in which case the `qa_pairs` audit row still writes but the `memory_chunks` insert is skipped, so retrieval and the Memory tab don't accumulate redundant copies of the same answered question.
-- A background job re-distills the **style profile** once the qualifying voice-corpus delta since the last rebuild reaches 10 (D19). This is the concrete mechanism behind "attuned after 15–20 applications". Distillation runs as a direct chat completion today; the half-price batch tier is deferred until a poller can reconcile its async result (D19).
-- **The voice corpus is filtered by origin.** It is the union of `qa_pairs` and `documents` rows with `origin in (user_written, user_edited)` plus all `gap_answers` rows (D19). `accepted_verbatim` drafts remain fully searchable as *content* but are excluded from *voice* learning. Without this filter, by application 15 most of `qa_pairs` would be Jobibi's own prose, and the style profile would be distilling model tone rather than the user's — drifting further from them with every cycle while claiming to do the opposite.
-- Every fact type has a freshness half-life (tools/skills ~180 days). Stale facts power **Grill Me** sessions.
+- On submission, captured answers are written to `qa_pairs` and chunked into `memory_chunks` (skipping chunk insertion for near-duplicate questions with similarity ≥ 0.90).
+- A background distillation task in the offscreen document checks if the qualifying voice corpus has grown by 10 items since the last rebuild (D19).
+- **The voice corpus is strictly filtered by origin:** It includes only `user_written` and `user_edited` entries from `qa_pairs`, `documents`, and `gap_answers`.
+  Verbatim-accepted drafts (`accepted_verbatim`) are excluded to prevent the model from learning its own output.
+- Distillation produces `profile_md` (5–8 concise bullets describing sentence length, formality, and stylistic traits) and caches it in `style_profile`.
+- Subsequent drafting calls inject the style profile into the system prompt.
 
-## Auto-Fill mechanics (premium)
+## Auto-Fill mechanics
 
-Content script sets field values with native setters + dispatched input/change events (required for React-controlled forms). Per-site adapters own the quirks; the generic fallback attempts simple text inputs only. Salary/notice questions are refused at the pipeline level (step 6), so Auto-Fill *cannot* touch them. Low-confidence mappings disable Insert entirely. The user reviews everything before submitting — Jobibi never submits.
+Auto-Fill is available to all users as a standard feature.
+When the user clicks Insert on a draft card, the content script updates the target field using native property setters and dispatches `input`, `change`, and `blur` events to ensure compatibility with reactive frameworks.
+Salary and notice questions are statically refused at the pipeline level and cannot be auto-filled.
+Low-confidence mappings (< 0.75) disable the Insert button.
+Jobibi never submits forms automatically; the user always reviews and clicks submit.
 
-## Cost model (GPT-5.6 Luna, 2026-08 prices)
+## Cost model (BYO-Key)
 
-| | Rate per 1M tokens |
-|---|---|
-| Input | $0.20 |
-| Output | $1.20 |
-| Cached input read | $0.02 (90% off) |
-| Cache write | $0.25 |
-| Batch tier | 0.5× |
+Users provide their own API key and pay their provider directly.
+Jobibi incurs zero operational hosting or AI costs.
 
-Per question: ~1k fresh input (question + snippets + job context) + ~1.8k cached style profile + ~300 output.
+| Provider | Model | Typical Pricing | Effective Cost per Question |
+|---|---|---|---|
+| **Google Gemini** | `gemini-2.5-flash` | Free tier (15 RPM, 1M TPM, 1,500 RPD)<br/>Paid: $0.075 / $0.30 per MTok | **$0.00** (Free Tier)<br/>≈ $0.00015 (Paid) |
+| **OpenAI** | `gpt-4o-mini` | $0.15 / $0.60 per MTok | ≈ **$0.0003** per question<br/>(≈ $0.006 per 20-question app) |
 
-- ≈ **$0.0006 per question** → **≈ $0.012 per 20-question application**.
-- Embeddings are free (gte-small runs in-process).
-- Style-profile distillation runs as a direct completion for now; the batch tier is deferred (D19).
+- Embeddings are completely free, computed locally via the `gte-small` ONNX model.
+- Drafting calls enforce strict `output_length` token constraints to prevent excessive token usage on personal API keys.
 
-At $50/month of AI spend that is roughly 4,100 applications. **The free tier's daily cap is therefore a fairness and abuse control, not a cost control** — the original $0.20–0.30 per application estimate was an order of magnitude too high.
+## Security and privacy notes
 
-**Verbosity is the cost risk, not price.** Luna runs roughly twice the median output length. Since output is the dominant cost line and application fields have character limits, drafting must constrain length explicitly — via the output schema, an explicit length instruction, and a `max_tokens` cap. Left untuned, this both inflates spend and produces answers too long for the box.
-
-## Security notes
-
-- The model provider API key exists only in Edge Function secrets. Extension ships zero secrets.
-- The provider does not train on API traffic; Asia data residency is available. Only the question, retrieved snippets, and the style profile ever leave — never another user's data.
-- Extension auth: Supabase email-OTP magic-link with PKCE code exchange, completed on a dedicated extension page (`entrypoints/callback`) rather than `chrome.identity.launchWebAuthFlow` against a third-party OAuth provider — this avoids MV3's captured-webview redirect quirks. The side panel and callback page each hold their own Supabase client, sharing `chrome.storage.local` as the session store; the side panel listens for `chrome.storage.onChanged` to pick up a session written by the callback page's client.
-- MV3 constraints respected: no remote code, service-worker lifecycle handled by WXT patterns.
-- The read boundary (identified question fields only, never other form fields) is a product-visible commitment stated at onboarding, and the Chrome Web Store listing must describe it accurately.
+- **Zero remote data storage:** No user data, resumes, answers, or embeddings are transmitted to Jobibi servers.
+  Everything is persisted in local IndexedDB storage.
+- **Ephemeral AI requests:** AI calls transmit only the active question, relevant memory snippets, and the style profile directly to the user's selected provider (Google or OpenAI).
+  No intermediary proxy inspects or logs requests.
+- **Credential security:** API keys and local user IDs are stored exclusively in `chrome.storage.local` within the user's browser profile.
+- **Manifest V3 compliance:** Extension code runs entirely from the local bundle with no remote script execution.
+  Host permissions are restricted to provider API endpoints and model weights CDN.
+- **Targeted DOM reading:** Content scripts read only identified question fields during form interaction and submission, ignoring non-application form fields.
 
 ## Known risks
 
-- **Voice fidelity on the chosen model** — Luna's writing and instruction-following are the least-measured of the candidates evaluated, and voice is the product's core differentiator. Mitigation: the style profile carries more weight than originally planned, the skeleton gives users an escape hatch to their own prose, and a bake-off against real user-written answers is the trigger to reconsider.
-- **ATS DOM drift** — job sites change markup; adapters break silently. Mitigation: fixture-based adapter tests, generic fallback, extraction-failure telemetry, and the re-derive-at-capture check that stops drift from corrupting memory.
-- **Gate calibration** — cutoffs are tuned against a hand-built fixture before launch and against logged decisions afterward. Bias is toward *asking*: a wrong ask costs one question, a wrong draft costs trust. The ask path is itself the safety net for miscalibration.
-- **Cold start** — the first application is mostly asks rather than drafts. Mitigation: anchored one-line questions, and the fact that every answer given goes straight into the form the user needed to fill anyway.
-- **Output verbosity** — see Cost model. Needs active tuning, not a default.
-- **MV3 service worker evictions** — state must live in storage, not memory.
+- **PGlite WASM footprint:** PGlite WASM and its pgvector module require ~10–15MB of memory within the offscreen document.
+  Mitigation: Hosting PGlite in a single offscreen document prevents multiple runtime allocations across tabs.
+- **Initial embedding model download:** Downloading the ~30MB `gte-small` ONNX model may take several seconds on slow connections.
+  Mitigation: Background prefetching begins immediately on install, while onboarding remains interactive; an inline spinner appears only if an upload occurs before download completion.
+- **IndexedDB eviction:** Browsers under extreme disk pressure may clear IndexedDB data.
+  Mitigation: The extension requests persistent storage via `navigator.storage.persist()` on initial launch.
+- **ATS DOM drift:** Target job sites periodically modify their DOM structure, risking extraction failures.
+  Mitigation: Comprehensive fixture test suites, generic fallback extractor, and the D16 re-derive mapping validation that drops mismatched writes.
+- **Gate calibration:** Relative thresholds must accurately distinguish between drafting, asking, and refusing across varying corpus sizes.
+  Mitigation: Tuning against a golden test fixture and recording all decisions to local telemetry tables.
+
