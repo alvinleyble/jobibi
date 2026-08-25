@@ -263,7 +263,7 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 
 **Rejected:** hiding pick-list questions from the panel entirely (silently conceals a question, and the day extraction misclassifies one the user has no way to see it); a greyed-out **Suggest an answer** button (a greyed button already means *working on it* in this UI, so it would reuse a signal that means something else, and it invites a click that is then refused).
 
-**Revisit trigger:** users reporting that a pick-list question genuinely needed help — most likely a long option list where recall is the burden rather than the decision. That is D25.
+**Revisit trigger:** D24 in the wild showing that long option lists are a recall burden, not a decision the user makes instantly.
 
 ## D25 — Option-aware recommendations: designed, deferred — **deferred** (2026-08-17)
 
@@ -283,3 +283,97 @@ Whether/when a registered business entity exists. Irrelevant until D3 is revisit
 **Rejected:** deterministic text matching of memory against option labels instead of the model ("Cypress.io" vs "Cypress", "manual test execution" vs "Manual testing", "Charles Proxy" vs "Charles" all fail quietly in both directions); a fourth gate outcome for selections (pushes a rendering concern into the one component the invariants require to stay a pure judgement about evidence, and every future field type would then argue for its own outcome).
 
 **Revisit trigger:** D24 in the wild showing that long option lists are a recall burden, not a decision the user makes instantly.
+
+## D26 — 100% Open Source, Local-First BYO-Key — **accepted** (2026-08-25)
+
+**Decision:** Jobibi transitions completely to a 100% open-source, local-first, Bring Your Own Key (BYO-Key) Chrome extension.
+Cloud SaaS infrastructure is retired entirely.
+The extension operates with zero servers, zero user accounts, and zero remote databases.
+
+**Supersedes:** D23 (Cloud SaaS only), and through it D21 (two-posture) and D20 (local-first default).
+Also supersedes D22 (local runtime guardrails) which D23 had superseded; D22's guardrails are now REINSTATED as the core operating model rather than deferred.
+
+**Core decisions:**
+
+1. **Zero cloud infrastructure.**
+   Jobibi operates no backend servers, Supabase instances, Edge Functions, or proxies.
+   The entire `supabase/` directory, `deno.json`, `deno.lock`, and `@supabase/supabase-js` dependency are removed.
+   Maintainer operational cost is permanently zero.
+
+2. **Zero-friction launch.**
+   No accounts, no sign-in screens, no emails, and no auth flows.
+   The extension opens directly to onboarding (resume upload) on first launch.
+   `SignIn.tsx`, `useSession.ts`, the `callback/` entrypoint, and `web_accessible_resources` declarations for callback navigation are removed.
+
+3. **Local vector & storage engine.**
+   PGlite (Postgres WASM, `@electric-sql/pglite` + `@electric-sql/pglite-pgvector`) with IndexedDB persistence (`idb://jobibi-local-memory`).
+   Resumes, chunk embeddings, Q&A history, style profiles, and telemetry are stored exclusively on-device.
+
+4. **Synthetic local user ID.**
+   A single `crypto.randomUUID()` is generated on first launch and persisted in `chrome.storage.local` as `jobibi_local_user_id`.
+   All schema tables retain their `user_id` column unchanged.
+   The synthetic ID is a data identity marker for export/import portability and schema stability, not a security artifact (Chrome profile isolation handles that).
+   Recovery path: if the ID is lost from `chrome.storage.local` but PGlite has data, read `user_id` from any existing row and re-persist it.
+
+5. **Offscreen document as pipeline host.**
+   PGlite WASM, the ONNX embedding model (`gte-small` via `@xenova/transformers`), and AI provider calls all run in a dedicated Chrome offscreen document.
+   The offscreen document is an invisible HTML page not subject to MV3 service worker 30-second termination timeouts.
+   The background service worker acts as a thin message router (sidePanel setup, capture message forwarding).
+   The side panel owns rendering only.
+   This prevents re-initializing multi-MB WASM runtimes on every service worker wake and protects long AI fetch calls (3–10s) from mid-flight termination.
+
+6. **Direct client AI calls — Gemini + OpenAI at launch.**
+   AI drafting calls go directly from the offscreen document to provider endpoints via the user's API key stored in `chrome.storage.local`.
+   Supported providers at launch: Google Gemini (`gemini-2.5-flash`) and OpenAI (`gpt-4o-mini`).
+   Anthropic Claude is deferred due to browser CORS issues (`anthropic-dangerous-direct-browser-access` header requirement), lack of a free tier, and tool-use workarounds for structured output.
+   Jobibi picks the model for each provider; there is no model picker in Settings.
+   Model defaults are updated via extension releases.
+
+7. **No forced API key gate.**
+   Jobibi is fully functional without an API key for document upload, memory bank management, question extraction across all adapters, pick-list handling (D24), submission capture and growth loop, and seen-before recall.
+   An API key is requested contextually only when the user clicks "Suggest an answer" or "Draft Cover Letter".
+   A friendly inline prompt guides the user to obtain a free Google Gemini key or an OpenAI key.
+
+8. **No paywalls, no quotas, no tiers.**
+   Daily suggestion caps, cover letter caps, `UsageQuotasView.tsx`, the `profiles` table, and the `is_beta_tester` gate are removed entirely.
+   Auto-Fill (the Insert button) is unlocked as a first-class feature for all users.
+   All existing safety guards (confidence threshold `< 0.75`, salary/notice refusal, mapping re-verification) remain strictly enforced.
+
+9. **ONNX embedding model — background download, non-blocking onboarding.**
+   The quantized `gte-small` ONNX model (~30MB) is downloaded in the background immediately after extension install and first open.
+   Onboarding (resume upload) is displayed immediately and is not blocked.
+   If the user uploads a document before the model download completes, a small spinner ("Preparing embedding model…") covers the remaining time.
+   After the first session, the model loads from CacheStorage/IndexedDB cache in <1 second.
+
+10. **Discard original files after parsing.**
+    Uploaded PDFs and DOCXs are parsed client-side (PDF via `unpdf`/`pdfjs-dist`, DOCX via `mammoth`).
+    Extracted text is stored in PGlite's `documents.extracted_text`, and the original binary is immediately discarded.
+    The user keeps their own local copy of their files.
+    The `documents.storage_path` column is unused in local mode.
+
+11. **Edge Function logic ported to `packages/shared/`.**
+    The business logic from `supabase/functions/` (`suggest`, `capture`, `draft-cover-letter`, `gap-answer`, `ingest`, `manual-input`, `style-profile`) is ported into `packages/shared/src/` as pure testable TypeScript functions.
+    The offscreen document orchestrates them.
+
+12. **User preferences in `chrome.storage.local`.**
+    `output_length`, selected provider, and API key are stored in `chrome.storage.local`.
+    The `profiles` table is removed.
+
+13. **Storage persistence guarantee.**
+    `navigator.storage.persist()` is called on PGlite initialization to prevent Chromium from evicting IndexedDB during low-disk states.
+
+14. **License: MIT.**
+    Jobibi remains open-source under the MIT license.
+
+**Rejected alternatives:**
+- *Keeping Supabase as an optional cloud posture alongside local (D21/D23):* Maintaining two parallel storage and AI execution pipelines introduces significant code divergence and ongoing backend maintenance for zero product benefit when the app is free.
+- *Stripping `user_id` from the schema entirely:* Requires extensive schema and query rewrites, drops data identity for export/import portability, and provides zero user-facing benefit.
+- *Hosting PGlite in the MV3 service worker:* Aggressive 30-second service worker lifecycle termination terminates long WASM initialization routines and mid-flight 3–10s LLM streaming calls.
+- *Anthropic Claude at launch:* Anthropic's browser CORS restriction requiring `anthropic-dangerous-direct-browser-access`, lack of a free tier, and non-native JSON schema workarounds create unnecessary user friction.
+- *Storing original uploaded files in IndexedDB:* Persisting raw binary payloads rapidly exhausts IndexedDB quota when the user already possesses their original documents.
+- *Model picker UI:* Exposing technical model configuration creates unnecessary decision friction for jobseekers; Jobibi selects the optimal cost-effective model per provider.
+
+**Revisit triggers:**
+- Anthropic improves browser CORS support and structured outputs → reconsider adding as a third provider.
+- Users report that hardcoded model defaults produce poor drafts → consider exposing a model selection setting.
+- PGlite WASM bundle or gte-small ONNX model prove prohibitive on low-end Chromebooks → consider lighter engine or vector alternatives.

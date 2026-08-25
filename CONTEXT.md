@@ -1,13 +1,15 @@
 # Jobibi
 
-Jobibi helps a jobseeker answer the questions on a job application form, using their own history, in their own voice. This file is the shared vocabulary — what each term means, and which words to avoid so they don't drift.
+Jobibi helps a jobseeker answer the questions on a job application form, using their own history, in their own voice.
+This file is the shared vocabulary — what each term means, and which words to avoid so they don't drift.
 
 ## Language
 
 ### The suggestion decision
 
 **Gate**:
-The code that decides, for one question, whether Jobibi drafts an answer, asks the user a question, or refuses. It has exactly three outcomes and it is not the model.
+The code that decides, for one question, whether Jobibi drafts an answer, asks the user a question, or refuses.
+It has exactly three outcomes and it is not the model.
 _Avoid_: Filter, confidence check, threshold
 
 **Draft**:
@@ -25,7 +27,8 @@ _Avoid_: Fallback, no-match, decline
 How well the user's history relates to the question being asked.
 
 **Role-match**:
-How well the user's history fits the kind of job being applied for. Distinct from question-match: a story can answer the question well and suit the role badly.
+How well the user's history fits the kind of job being applied for.
+Distinct from question-match: a story can answer the question well and suit the role badly.
 _Avoid_: Job fit, relevance
 
 **Gap question**:
@@ -52,7 +55,7 @@ _Avoid_: Citation, attribution, reference
 ### The memory bank
 
 **Memory bank**:
-Everything Jobibi knows about one user — uploaded documents, intake answers, stories, facts, and every answer they have submitted.
+Everything Jobibi knows about one user — uploaded documents, stories, facts, and every answer they have submitted.
 _Avoid_: Knowledge base, corpus, profile
 
 **Capture**:
@@ -60,11 +63,13 @@ Reading a user's submitted answers back off the form and storing them, so the me
 _Avoid_: Ingest, sync, harvest
 
 **Origin**:
-How a stored answer came to exist — written by the user from scratch, edited from a Jobibi draft, or accepted verbatim. Determines whether it teaches Jobibi the user's voice.
+How a stored answer came to exist — written by the user from scratch, edited from a Jobibi draft, or accepted verbatim.
+Determines whether it teaches Jobibi the user's voice.
 _Avoid_: Source, provenance (reserved above), authorship
 
 **Voice corpus**:
-The subset of the memory bank that trains the style profile: only text the user actually wrote or meaningfully edited. Verbatim-accepted drafts are excluded, so Jobibi never learns its own writing back from itself.
+The subset of the memory bank that trains the style profile: only text the user actually wrote or meaningfully edited.
+Verbatim-accepted drafts are excluded, so Jobibi never learns its own writing back from itself.
 _Avoid_: Training set, style corpus
 
 **Style profile**:
@@ -72,7 +77,8 @@ The distilled guide to how this user writes, rebuilt from the voice corpus as it
 _Avoid_: Tone guide, voice model, persona
 
 **Seen-before**:
-The case where the user has already answered this question on a previous application. Whether it is offered for reuse or re-told depends on role-match.
+The case where the user has already answered this question on a previous application.
+Whether it is offered for reuse or re-told depends on role-match.
 _Avoid_: Duplicate, cache hit, repeat
 
 ### High-stakes handling
@@ -82,7 +88,8 @@ The handling salary and notice-period questions receive: Jobibi never stores or 
 _Avoid_: Sensitive fact, always-confirm, confirmation flow
 
 **Pick-list question**:
-A question whose field type is `select`, `radio`, or `checkbox`. Decided in code before retrieval and before the gate — Jobibi never drafts prose or calls the model for it, and it never appears in gate telemetry.
+A question whose field type is `select`, `radio`, or `checkbox`.
+Decided in code before retrieval and before the gate — Jobibi never drafts prose or calls the model for it, and it never appears in gate telemetry.
 _Avoid_: Fourth outcome, selection question
 
 ### Reading the page
@@ -92,13 +99,37 @@ The per-site code that finds the questions on an application form and binds each
 _Avoid_: Scraper, parser, connector
 
 **Job context**:
-What Jobibi knows about the job being applied for — the role title and company, plus the description when the page happens to carry it. The input to role-match.
+What Jobibi knows about the job being applied for — the role title and company, plus the description when the page happens to carry it.
+The input to role-match.
 _Avoid_: Job data, JD, posting
 
 **Mapping**:
-The binding between a question on the page and the field the answer goes into. Re-derived before any capture, because a wrong mapping silently corrupts the memory bank.
+The binding between a question on the page and the field the answer goes into.
+Re-derived before any capture, because a wrong mapping silently corrupts the memory bank.
 _Avoid_: Binding, association, link
 
 **Sidekick**:
 The docked panel in the browser where Jobibi shows its copy cards and asks its questions.
 _Avoid_: Sidebar, widget, extension UI
+
+### Architecture and runtime
+
+**BYO-Key**:
+Bring Your Own Key — the user supplies their own AI provider API key.
+Jobibi stores it locally and makes direct calls to the provider.
+_Avoid_: API key mode, self-hosted
+
+**Offscreen host**:
+The invisible Chrome offscreen document that holds PGlite, the ONNX embedding model, and AI provider dispatch.
+The single compute context for the extension.
+_Avoid_: Background worker, service worker (those are different MV3 contexts)
+
+**Provider adapter**:
+The per-provider code that translates a Jobibi drafting request into the provider's API format (Gemini `responseSchema`, OpenAI `json_schema`).
+_Avoid_: AI client, model adapter
+
+**Local user ID**:
+A synthetic `crypto.randomUUID()` persisted in `chrome.storage.local`, used as `user_id` across all PGlite tables.
+A data identity marker, not a security artifact.
+_Avoid_: Account, session, auth token
+
